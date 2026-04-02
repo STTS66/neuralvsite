@@ -1194,14 +1194,6 @@ app.post(
 app.post(
   '/api/internal/support/settings',
   asyncRoute(async (req, res) => {
-    const actorTelegramUserId = toNullableTelegramId(req.body.actorTelegramUserId);
-    if (!actorTelegramUserId) {
-      res.status(400).json({ success: false, message: 'actorTelegramUserId is required.' });
-      return;
-    }
-
-    await ensureSupportAdmin(actorTelegramUserId);
-
     if (Object.prototype.hasOwnProperty.call(req.body, 'supportChatId')) {
       await setSupportSetting('support_chat_id', toNullableTelegramId(req.body.supportChatId));
     }
@@ -1350,19 +1342,17 @@ app.get(
 app.post(
   '/api/internal/support/reply',
   asyncRoute(async (req, res) => {
-    const actorTelegramUserId = toNullableTelegramId(req.body.actorTelegramUserId);
     const conversationId = toNullableInteger(req.body.conversationId);
     const text = normalizeText(req.body.text, 2000);
 
-    if (!actorTelegramUserId || !conversationId || !text) {
+    if (!conversationId || !text) {
       res.status(400).json({
         success: false,
-        message: 'actorTelegramUserId, conversationId and text are required.',
+        message: 'conversationId and text are required.',
       });
       return;
     }
 
-    const admin = await ensureSupportAdmin(actorTelegramUserId);
     const conversation = await getAsync(
       'SELECT * FROM support_conversations WHERE id = ?',
       [conversationId],
@@ -1376,8 +1366,6 @@ app.post(
     const createdAt = nowIso();
     const senderName =
       normalizeText(req.body.senderName, 80) ||
-      admin.first_name ||
-      admin.username ||
       'Поддержка';
 
     const insertResult = await runAsync(

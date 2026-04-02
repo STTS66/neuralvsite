@@ -6,8 +6,7 @@
 2. Fill in `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
 3. Fill in `TELEGRAM_BOT_TOKEN`
 4. Fill in `SUPPORT_INTERNAL_TOKEN` with a long random string
-5. Fill in `SUPPORT_ADMIN_TELEGRAM_IDS` with your Telegram ID
-6. Change `DEFAULT_ADMIN_PASSWORD`
+5. Change `DEFAULT_ADMIN_PASSWORD`
 
 ## 2. Build and start
 
@@ -28,8 +27,6 @@ docker compose logs -f telegram-bot
 1. Add the bot into your forum group with topics enabled
 2. In the target group run `/setchat`
 3. Open the needed topic and run `/settopic`
-4. Add other admins with `/addadmin` or reply to their message and run `/addadmin`
-
 ## 5. How replies work
 
 1. User writes in the site dialog
