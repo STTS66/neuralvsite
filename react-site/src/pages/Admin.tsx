@@ -413,6 +413,7 @@ const Admin: React.FC = () => {
                             type="button"
                           >
                             <Trash size={14} />
+                            Удалить
                           </button>
                         </div>
 
@@ -572,6 +573,14 @@ const Admin: React.FC = () => {
                               Скачать файл
                             </a>
                           ) : null}
+                          <button
+                            className="btn btn-sm btn-outline btn-trash mt-2"
+                            onClick={() => void handleDeleteOrder(order.id)}
+                            type="button"
+                          >
+                            <Trash size={14} />
+                            Удалить заявку
+                          </button>
                           <div className="order-date">{order.createdAt}</div>
                         </div>
                       ))
