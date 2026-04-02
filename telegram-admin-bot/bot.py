@@ -19,7 +19,7 @@ logger = logging.getLogger("telegram-admin-bot")
 BOT_TOKEN = os.environ["ADMIN_NOTIFY_BOT_TOKEN"]
 BACKEND_INTERNAL_URL = os.getenv(
     "BACKEND_INTERNAL_URL",
-    "http://backend:3000/api/internal/admin",
+    "http://neuralv-backend:3000/api/internal/admin",
 ).rstrip("/")
 SUPPORT_INTERNAL_TOKEN = os.environ["SUPPORT_INTERNAL_TOKEN"]
 POLL_INTERVAL_SECONDS = float(os.getenv("ADMIN_NOTIFY_POLL_INTERVAL_SECONDS", "5"))

@@ -26,7 +26,7 @@ logger = logging.getLogger("telegram-support-bot")
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 BACKEND_INTERNAL_URL = os.getenv(
     "BACKEND_INTERNAL_URL",
-    "http://backend:3000/api/internal/support",
+    "http://neuralv-backend:3000/api/internal/support",
 ).rstrip("/")
 SUPPORT_INTERNAL_TOKEN = os.environ["SUPPORT_INTERNAL_TOKEN"]
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "2"))
