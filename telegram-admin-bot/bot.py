@@ -97,14 +97,15 @@ class AdminNotifyApi:
         response.raise_for_status()
 
 
-def replace_host(parsed_url: SplitResult, hostname: str) -> str:
+def replace_host(parsed_url: SplitResult, hostname: str, port: int | None = None) -> str:
     if ":" in hostname and not hostname.startswith("["):
         hostname = f"[{hostname}]"
-    port = f":{parsed_url.port}" if parsed_url.port else ""
+    effective_port = parsed_url.port if port is None else port
+    port_suffix = f":{effective_port}" if effective_port else ""
     return urlunsplit(
         (
             parsed_url.scheme,
-            f"{hostname}{port}",
+            f"{hostname}{port_suffix}",
             parsed_url.path,
             parsed_url.query,
             parsed_url.fragment,
@@ -168,6 +169,11 @@ def build_backend_base_urls(base_url: str) -> list[str]:
     for hostname in ("neuralv-backend", "backend"):
         for address in resolve_host_ips(hostname):
             add(replace_host(parsed_url, address))
+
+    for frontend_host in ("frontend", "neuralv-frontend"):
+        add(replace_host(parsed_url, frontend_host, 80))
+        for address in resolve_host_ips(frontend_host):
+            add(replace_host(parsed_url, address, 80))
 
     return candidates
 
