@@ -2,6 +2,7 @@ import html
 import logging
 import os
 from datetime import datetime
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 from urllib.parse import quote
 
 import httpx
@@ -33,33 +34,102 @@ ADMIN_NOTIFY_CHAT_IDS = [
 
 class AdminNotifyApi:
     def __init__(self) -> None:
-        self.client = httpx.AsyncClient(
-            base_url=BACKEND_INTERNAL_URL,
-            headers={"x-internal-token": SUPPORT_INTERNAL_TOKEN},
-            timeout=20.0,
-        )
+        self.clients = [
+            httpx.AsyncClient(
+                base_url=base_url,
+                headers={"x-internal-token": SUPPORT_INTERNAL_TOKEN},
+                timeout=20.0,
+                trust_env=False,
+            )
+            for base_url in build_backend_base_urls(BACKEND_INTERNAL_URL)
+        ]
+        self.active_client = self.clients[0]
 
     async def close(self) -> None:
-        await self.client.aclose()
+        for client in self.clients:
+            await client.aclose()
+
+    async def request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        last_error: Exception | None = None
+        ordered_clients = [self.active_client] + [
+            client for client in self.clients if client is not self.active_client
+        ]
+
+        for client in ordered_clients:
+            try:
+                response = await client.request(method, url, **kwargs)
+                if client is not self.active_client:
+                    logger.warning("Switched admin bot backend client to %s", client.base_url)
+                    self.active_client = client
+                return response
+            except httpx.ConnectError as exc:
+                last_error = exc
+                logger.warning(
+                    "Admin bot failed to reach %s%s: %s",
+                    client.base_url,
+                    url,
+                    exc,
+                )
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("Admin bot internal API request failed without a connection error")
 
     async def get_state(self) -> dict:
-        response = await self.client.get("/state")
+        response = await self.request("GET", "/state")
         response.raise_for_status()
         return response.json()
 
     async def set_settings(self, **settings: str | None) -> dict:
-        response = await self.client.post("/settings", json=settings)
+        response = await self.request("POST", "/settings", json=settings)
         response.raise_for_status()
         return response.json()
 
     async def fetch_outbox(self) -> list[dict]:
-        response = await self.client.get("/orders/outbox", params={"limit": 20})
+        response = await self.request("GET", "/orders/outbox", params={"limit": 20})
         response.raise_for_status()
         return response.json().get("items", [])
 
     async def mark_delivered(self, order_id: int) -> None:
-        response = await self.client.post(f"/orders/{order_id}/delivered")
+        response = await self.request("POST", f"/orders/{order_id}/delivered")
         response.raise_for_status()
+
+
+def replace_host(parsed_url: SplitResult, hostname: str) -> str:
+    port = f":{parsed_url.port}" if parsed_url.port else ""
+    return urlunsplit(
+        (
+            parsed_url.scheme,
+            f"{hostname}{port}",
+            parsed_url.path,
+            parsed_url.query,
+            parsed_url.fragment,
+        )
+    )
+
+
+def build_backend_base_urls(base_url: str) -> list[str]:
+    parsed_url = urlsplit(base_url)
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(candidate: str) -> None:
+        normalized = candidate.rstrip("/")
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            candidates.append(normalized)
+
+    add(base_url)
+
+    if parsed_url.hostname == "neuralv-backend":
+        add(replace_host(parsed_url, "backend"))
+    elif parsed_url.hostname == "backend":
+        add(replace_host(parsed_url, "neuralv-backend"))
+    elif parsed_url.hostname:
+        add(replace_host(parsed_url, "backend"))
+        add(replace_host(parsed_url, "neuralv-backend"))
+
+    return candidates
 
 
 def format_timestamp(value: str) -> str:

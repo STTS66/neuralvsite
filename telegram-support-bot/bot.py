@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 import httpx
 from telegram import BotCommand, Update
@@ -34,26 +35,58 @@ POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "2"))
 
 class SupportApi:
     def __init__(self) -> None:
-        self.client = httpx.AsyncClient(
-            base_url=BACKEND_INTERNAL_URL,
-            headers={"x-internal-token": SUPPORT_INTERNAL_TOKEN},
-            timeout=30.0,
-        )
+        self.clients = [
+            httpx.AsyncClient(
+                base_url=base_url,
+                headers={"x-internal-token": SUPPORT_INTERNAL_TOKEN},
+                timeout=30.0,
+                trust_env=False,
+            )
+            for base_url in build_backend_base_urls(BACKEND_INTERNAL_URL)
+        ]
+        self.active_client = self.clients[0]
 
     async def close(self) -> None:
-        await self.client.aclose()
+        for client in self.clients:
+            await client.aclose()
+
+    async def request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        last_error: Exception | None = None
+        ordered_clients = [self.active_client] + [
+            client for client in self.clients if client is not self.active_client
+        ]
+
+        for client in ordered_clients:
+            try:
+                response = await client.request(method, url, **kwargs)
+                if client is not self.active_client:
+                    logger.warning("Switched support bot backend client to %s", client.base_url)
+                    self.active_client = client
+                return response
+            except httpx.ConnectError as exc:
+                last_error = exc
+                logger.warning(
+                    "Support bot failed to reach %s%s: %s",
+                    client.base_url,
+                    url,
+                    exc,
+                )
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("Support bot internal API request failed without a connection error")
 
     async def get_state(self) -> dict[str, Any]:
-        response = await self.client.get("/state")
+        response = await self.request("GET", "/state")
         response.raise_for_status()
         return response.json()
 
     async def set_settings(self, **settings: Any) -> dict[str, Any]:
-        response = await self.client.post("/settings", json=settings)
+        response = await self.request("POST", "/settings", json=settings)
         return response.json()
 
     async def fetch_outbox(self) -> list[dict[str, Any]]:
-        response = await self.client.get("/outbox", params={"limit": 20})
+        response = await self.request("GET", "/outbox", params={"limit": 20})
         response.raise_for_status()
         data = response.json()
         return data.get("items", [])
@@ -65,7 +98,8 @@ class SupportApi:
         telegram_message_id: int,
         telegram_thread_id: str | None,
     ) -> None:
-        response = await self.client.post(
+        response = await self.request(
+            "POST",
             f"/outbox/{message_id}/delivered",
             json={
                 "telegramChatId": telegram_chat_id,
@@ -80,7 +114,8 @@ class SupportApi:
         chat_id: str,
         message_id: int,
     ) -> dict[str, Any] | None:
-        response = await self.client.get(
+        response = await self.request(
+            "GET",
             "/telegram-map",
             params={"chatId": chat_id, "messageId": message_id},
         )
@@ -92,7 +127,8 @@ class SupportApi:
         conversation_id: int,
         text: str,
     ) -> dict[str, Any]:
-        response = await self.client.post(
+        response = await self.request(
+            "POST",
             "/reply",
             json={
                 "conversationId": conversation_id,
@@ -110,7 +146,8 @@ class SupportApi:
         filename: str,
         content_type: str,
     ) -> dict[str, Any]:
-        response = await self.client.post(
+        response = await self.request(
+            "POST",
             "/reply-media",
             data={
                 "conversationId": str(conversation_id),
@@ -122,6 +159,43 @@ class SupportApi:
             },
         )
         return response.json()
+
+
+def replace_host(parsed_url: SplitResult, hostname: str) -> str:
+    port = f":{parsed_url.port}" if parsed_url.port else ""
+    return urlunsplit(
+        (
+            parsed_url.scheme,
+            f"{hostname}{port}",
+            parsed_url.path,
+            parsed_url.query,
+            parsed_url.fragment,
+        )
+    )
+
+
+def build_backend_base_urls(base_url: str) -> list[str]:
+    parsed_url = urlsplit(base_url)
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(candidate: str) -> None:
+        normalized = candidate.rstrip("/")
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            candidates.append(normalized)
+
+    add(base_url)
+
+    if parsed_url.hostname == "neuralv-backend":
+        add(replace_host(parsed_url, "backend"))
+    elif parsed_url.hostname == "backend":
+        add(replace_host(parsed_url, "neuralv-backend"))
+    elif parsed_url.hostname:
+        add(replace_host(parsed_url, "backend"))
+        add(replace_host(parsed_url, "neuralv-backend"))
+
+    return candidates
 
 
 def truncate(value: str, limit: int) -> str:
