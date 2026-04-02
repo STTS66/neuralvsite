@@ -1,0 +1,48 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: neuralv-backend
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      DB_PATH: /app/data/database.db
+      UPLOAD_DIR: /app/uploads
+      SUPPORT_INTERNAL_TOKEN: ${SUPPORT_INTERNAL_TOKEN}
+      SUPPORT_ADMIN_TELEGRAM_IDS: ${SUPPORT_ADMIN_TELEGRAM_IDS}
+      SUPPORT_MESSAGE_COOLDOWN_MS: 5000
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      VT_API_KEY: ${VT_API_KEY}
+      DEFAULT_ADMIN_USERNAME: ${DEFAULT_ADMIN_USERNAME}
+      DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD}
+    volumes:
+      - backend_data:/app/data
+      - backend_uploads:/app/uploads
+
+  telegram-bot:
+    build:
+      context: ./telegram-support-bot
+    container_name: neuralv-telegram-bot
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      BACKEND_INTERNAL_URL: http://backend:3000/api/internal/support
+      SUPPORT_INTERNAL_TOKEN: ${SUPPORT_INTERNAL_TOKEN}
+      POLL_INTERVAL_SECONDS: 2
+
+  frontend:
+    build:
+      context: ./react-site
+    container_name: neuralv-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${APP_PORT:-80}:80"
+
+volumes:
+  backend_data:
+  backend_uploads:

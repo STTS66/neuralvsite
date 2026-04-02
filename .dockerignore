@@ -1,0 +1,8 @@
+.git
+.gitignore
+backend/node_modules
+backend/uploads
+backend/database.db
+react-site/node_modules
+react-site/dist
+telegram-support-bot/__pycache__

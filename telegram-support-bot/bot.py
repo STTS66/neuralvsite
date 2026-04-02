@@ -1,0 +1,404 @@
+import html
+import logging
+import os
+from datetime import datetime
+from typing import Any
+
+import httpx
+from telegram import BotCommand, Update
+from telegram.constants import ChatType, ParseMode
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
+
+
+logging.basicConfig(
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+)
+logger = logging.getLogger("telegram-support-bot")
+
+BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+BACKEND_INTERNAL_URL = os.getenv(
+    "BACKEND_INTERNAL_URL",
+    "http://backend:3000/api/internal/support",
+).rstrip("/")
+SUPPORT_INTERNAL_TOKEN = os.environ["SUPPORT_INTERNAL_TOKEN"]
+POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "2"))
+
+
+class SupportApi:
+    def __init__(self) -> None:
+        self.client = httpx.AsyncClient(
+            base_url=BACKEND_INTERNAL_URL,
+            headers={"x-internal-token": SUPPORT_INTERNAL_TOKEN},
+            timeout=15.0,
+        )
+
+    async def close(self) -> None:
+        await self.client.aclose()
+
+    async def get_state(self, telegram_user_id: int | None = None) -> dict[str, Any]:
+        response = await self.client.get(
+            "/state",
+            params={"telegramUserId": telegram_user_id} if telegram_user_id else None,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def claim_admin(self, user) -> dict[str, Any]:
+        response = await self.client.post(
+            "/claim-admin",
+            json={
+                "telegramUserId": str(user.id),
+                "username": user.username,
+                "firstName": user.first_name,
+            },
+        )
+        return response.json()
+
+    async def add_admin(
+        self,
+        actor_id: int,
+        target_user_id: int,
+        username: str | None,
+        first_name: str | None,
+    ) -> dict[str, Any]:
+        response = await self.client.post(
+            "/admins",
+            json={
+                "actorTelegramUserId": str(actor_id),
+                "targetTelegramUserId": str(target_user_id),
+                "username": username,
+                "firstName": first_name,
+            },
+        )
+        return response.json()
+
+    async def set_settings(self, actor_id: int, **settings: Any) -> dict[str, Any]:
+        payload = {"actorTelegramUserId": str(actor_id), **settings}
+        response = await self.client.post("/settings", json=payload)
+        return response.json()
+
+    async def fetch_outbox(self) -> list[dict[str, Any]]:
+        response = await self.client.get("/outbox", params={"limit": 20})
+        response.raise_for_status()
+        data = response.json()
+        return data.get("items", [])
+
+    async def mark_delivered(
+        self,
+        message_id: int,
+        telegram_chat_id: str,
+        telegram_message_id: int,
+        telegram_thread_id: str | None,
+    ) -> None:
+        response = await self.client.post(
+            f"/outbox/{message_id}/delivered",
+            json={
+                "telegramChatId": telegram_chat_id,
+                "telegramMessageId": telegram_message_id,
+                "telegramThreadId": telegram_thread_id,
+            },
+        )
+        response.raise_for_status()
+
+    async def lookup_reply_target(
+        self,
+        chat_id: str,
+        message_id: int,
+    ) -> dict[str, Any] | None:
+        response = await self.client.get(
+            "/telegram-map",
+            params={"chatId": chat_id, "messageId": message_id},
+        )
+        response.raise_for_status()
+        return response.json().get("item")
+
+    async def send_support_reply(
+        self,
+        actor_id: int,
+        conversation_id: int,
+        text: str,
+        sender_name: str,
+    ) -> dict[str, Any]:
+        response = await self.client.post(
+            "/reply",
+            json={
+                "actorTelegramUserId": str(actor_id),
+                "conversationId": conversation_id,
+                "text": text,
+                "senderName": sender_name,
+            },
+        )
+        return response.json()
+
+
+def truncate(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: limit - 3] + "..."
+
+
+def format_timestamp(value: str) -> str:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+    except ValueError:
+        return value
+
+
+def render_support_ticket(item: dict[str, Any]) -> str:
+    text = html.escape(truncate(item["text"], 3200))
+    display_name = html.escape(item.get("conversationDisplayName") or item["senderName"])
+    public_id = html.escape(item["publicId"])
+    website_user = html.escape(str(item["userId"])) if item.get("userId") else "Гость"
+
+    return (
+        "<b>Новый запрос поддержки</b>\n"
+        f"<b>Диалог:</b> {public_id}\n"
+        f"<b>Клиент:</b> {display_name}\n"
+        f"<b>ID на сайте:</b> {website_user}\n"
+        f"<b>Время:</b> {html.escape(format_timestamp(item['createdAt']))}\n\n"
+        f"{text}\n\n"
+        "<i>Ответьте реплаем на это сообщение, чтобы отправить ответ в диалог на сайте.</i>"
+    )
+
+
+def build_help_text() -> str:
+    return (
+        "Команды поддержки:\n"
+        "/claimadmin - занять первого админа бота\n"
+        "/status - показать текущую настройку\n"
+        "/setchat - привязать текущую группу для тикетов\n"
+        "/settopic - привязать текущую тему форума\n"
+        "/addadmin - добавить админа по reply или по id"
+    )
+
+
+async def get_api(context: ContextTypes.DEFAULT_TYPE) -> SupportApi:
+    return context.application.bot_data["support_api"]
+
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.effective_message.reply_text(build_help_text())
+
+
+async def claim_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    api = await get_api(context)
+    result = await api.claim_admin(update.effective_user)
+
+    if result.get("success"):
+        await update.effective_message.reply_text("Админ успешно назначен.")
+        return
+
+    await update.effective_message.reply_text(result.get("message", "Не удалось назначить админа."))
+
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    api = await get_api(context)
+    state = await api.get_state(update.effective_user.id)
+    chat_id = state.get("supportChatId") or "не задан"
+    topic_id = state.get("supportThreadId") or "не задана"
+    is_admin = "да" if state.get("isAdmin") else "нет"
+
+    await update.effective_message.reply_text(
+        f"Админ: {is_admin}\n"
+        f"Группа: {chat_id}\n"
+        f"Тема: {topic_id}\n"
+        f"Задержка сообщений: {int(state.get('cooldownMs', 5000) / 1000)} сек"
+    )
+
+
+async def set_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
+        await update.effective_message.reply_text("Команду /setchat нужно запускать внутри нужной группы.")
+        return
+
+    api = await get_api(context)
+    result = await api.set_settings(
+        update.effective_user.id,
+        supportChatId=str(update.effective_chat.id),
+    )
+
+    if result.get("success"):
+        await update.effective_message.reply_text(f"Группа поддержки сохранена: {update.effective_chat.id}")
+        return
+
+    await update.effective_message.reply_text(result.get("message", "Не удалось сохранить группу."))
+
+
+async def set_topic_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    api = await get_api(context)
+    thread_id = update.effective_message.message_thread_id
+    result = await api.set_settings(
+        update.effective_user.id,
+        supportThreadId=str(thread_id) if thread_id else None,
+    )
+
+    if result.get("success"):
+        if thread_id:
+            await update.effective_message.reply_text(f"Тема поддержки сохранена: {thread_id}")
+        else:
+            await update.effective_message.reply_text("Тема очищена. Новые тикеты будут идти в основной чат.")
+        return
+
+    await update.effective_message.reply_text(result.get("message", "Не удалось сохранить тему."))
+
+
+async def add_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    target_user = None
+
+    if update.effective_message.reply_to_message:
+        target_user = update.effective_message.reply_to_message.from_user
+    elif context.args:
+        try:
+            target_user_id = int(context.args[0])
+        except ValueError:
+            await update.effective_message.reply_text("Укажите числовой Telegram ID или ответьте на сообщение пользователя.")
+            return
+
+        target_user = type(
+            "SimpleUser",
+            (),
+            {"id": target_user_id, "username": None, "first_name": None},
+        )()
+
+    if not target_user:
+        await update.effective_message.reply_text("Ответьте на сообщение будущего админа или передайте его Telegram ID.")
+        return
+
+    api = await get_api(context)
+    result = await api.add_admin(
+        update.effective_user.id,
+        target_user.id,
+        getattr(target_user, "username", None),
+        getattr(target_user, "first_name", None),
+    )
+
+    if result.get("success"):
+        await update.effective_message.reply_text(f"Админ добавлен: {target_user.id}")
+        return
+
+    await update.effective_message.reply_text(result.get("message", "Не удалось добавить админа."))
+
+
+async def sync_outbox(context: ContextTypes.DEFAULT_TYPE) -> None:
+    api = await get_api(context)
+
+    try:
+        state = await api.get_state()
+        chat_id = state.get("supportChatId")
+        thread_id = state.get("supportThreadId")
+        if not chat_id:
+            return
+
+        items = await api.fetch_outbox()
+        for item in items:
+            message = await context.bot.send_message(
+                chat_id=int(chat_id),
+                message_thread_id=int(thread_id) if thread_id else None,
+                text=render_support_ticket(item),
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+            await api.mark_delivered(
+                item["id"],
+                str(chat_id),
+                message.message_id,
+                str(thread_id) if thread_id else None,
+            )
+    except Exception:
+        logger.exception("Failed to sync support outbox")
+
+
+async def reply_bridge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message or not message.reply_to_message or not message.text:
+        return
+
+    api = await get_api(context)
+    state = await api.get_state(update.effective_user.id)
+    if not state.get("isAdmin"):
+        return
+
+    if str(update.effective_chat.id) != str(state.get("supportChatId")):
+        return
+
+    target = await api.lookup_reply_target(
+        str(update.effective_chat.id),
+        message.reply_to_message.message_id,
+    )
+    if not target:
+        return
+
+    sender_name = (
+        update.effective_user.full_name
+        or update.effective_user.username
+        or "Поддержка"
+    )
+    result = await api.send_support_reply(
+        update.effective_user.id,
+        target["conversationId"],
+        message.text,
+        sender_name,
+    )
+
+    if not result.get("success"):
+        await message.reply_text(result.get("message", "Не удалось доставить ответ на сайт."))
+
+
+async def set_commands(application: Application) -> None:
+    await application.bot.set_my_commands(
+        [
+            BotCommand("start", "Показать помощь"),
+            BotCommand("claimadmin", "Занять первого админа"),
+            BotCommand("status", "Показать статус поддержки"),
+            BotCommand("setchat", "Сохранить текущую группу"),
+            BotCommand("settopic", "Сохранить текущую тему"),
+            BotCommand("addadmin", "Добавить админа"),
+        ]
+    )
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.exception("Unhandled bot error: %s", context.error)
+
+
+async def post_shutdown(application: Application) -> None:
+    api: SupportApi = application.bot_data["support_api"]
+    await api.close()
+
+
+def main() -> None:
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(set_commands)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
+    application.bot_data["support_api"] = SupportApi()
+
+    application.add_error_handler(error_handler)
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("claimadmin", claim_admin_command))
+    application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("setchat", set_chat_command))
+    application.add_handler(CommandHandler("settopic", set_topic_command))
+    application.add_handler(CommandHandler("addadmin", add_admin_command))
+    application.add_handler(
+        MessageHandler(filters.TEXT & filters.REPLY & ~filters.COMMAND, reply_bridge)
+    )
+
+    application.job_queue.run_repeating(sync_outbox, interval=POLL_INTERVAL_SECONDS, first=3)
+    application.run_polling(drop_pending_updates=False)
+
+
+if __name__ == "__main__":
+    main()

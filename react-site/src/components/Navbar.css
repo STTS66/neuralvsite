@@ -1,0 +1,329 @@
+/* ========== NAVBAR PILL ========== */
+.navbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 12px 24px;
+  transition: all 0.4s ease;
+}
+
+.nav-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 1100px;
+  background: rgba(15, 15, 15, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 50px;
+  padding: 10px 12px 10px 24px;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+  transition: all 0.4s ease;
+}
+
+.navbar.scrolled .nav-pill {
+  background: rgba(10, 10, 10, 0.95);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+}
+
+/* ========== BRAND ========== */
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.15rem;
+  font-weight: 900;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+
+.brand-icon {
+  color: #fff;
+  opacity: 0.9;
+}
+
+.brand-text {
+  color: #fff;
+  font-weight: 900;
+  letter-spacing: 2px;
+}
+
+.brand-accent {
+  color: #e53935;
+}
+
+/* ========== CENTER NAV ========== */
+.nav-center {
+  display: none;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (min-width: 768px) {
+  .nav-center {
+    display: flex;
+  }
+}
+
+.nav-link {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 1.5px;
+  padding: 8px 16px;
+  border-radius: 20px;
+  transition: all 0.3s ease;
+  position: relative;
+  white-space: nowrap;
+}
+
+.nav-link-button {
+  border: none;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.nav-link:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.nav-link.active {
+  color: #fff;
+}
+
+.nav-link.active::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60%;
+  height: 2px;
+  background: #fff;
+  border-radius: 2px;
+}
+
+/* ========== RIGHT ACTIONS ========== */
+.nav-actions {
+  display: none;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (min-width: 768px) {
+  .nav-actions {
+    display: flex;
+  }
+}
+
+.nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border-radius: 50px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-decoration: none;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  font-family: 'Inter', sans-serif;
+  white-space: nowrap;
+}
+
+.nav-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
+}
+
+.nav-btn-auth {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.nav-btn-support {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.18), rgba(125, 211, 252, 0.08));
+  border-color: rgba(125, 211, 252, 0.25);
+}
+
+/* ========== HAMBURGER ========== */
+.hamburger {
+  display: block;
+  background: none;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  z-index: 1001;
+  padding: 8px;
+}
+
+@media (min-width: 768px) {
+  .hamburger {
+    display: none;
+  }
+}
+
+/* ========== MOBILE MENU ========== */
+.mobile-menu {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 80%;
+  max-width: 350px;
+  height: 100vh;
+  z-index: 999;
+  padding: 100px 32px 32px;
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 10, 10, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: -20px 0 50px rgba(0, 0, 0, 0.7);
+}
+
+.mobile-nav-items {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.mobile-nav-item {
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.5);
+  transition: color 0.3s ease, transform 0.3s ease;
+}
+
+.mobile-nav-item:hover {
+  color: #fff;
+  transform: translateX(8px);
+}
+
+.mobile-nav-button {
+  background: none;
+  border: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+
+.logout-text {
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 0;
+  color: #ff6b6b;
+  letter-spacing: 2px;
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.logout-text:hover {
+  color: #ff8787;
+}
+
+.auth-text {
+  color: #fff;
+}
+
+/* ========== TIKTOK AVATAR & DROPDOWN ========== */
+.avatar-tiktok {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #2b2b2b;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+}
+
+.avatar-tiktok:hover {
+  background: #3a3a3a;
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: scale(1.05);
+}
+
+.user-menu-container {
+  position: relative;
+}
+
+.nav-user-trigger {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.nav-username {
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.user-dropdown {
+  position: absolute;
+  top: calc(100% + 16px);
+  right: 0;
+  width: 200px;
+  background: rgba(15, 15, 15, 0.95);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: left;
+  letter-spacing: 1px;
+  cursor: pointer;
+  border-radius: 12px;
+  text-decoration: none;
+  transition: background 0.2s ease;
+}
+
+.dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.dropdown-item.text-danger {
+  color: #ff6b6b;
+}
+
+.dropdown-item.text-danger:hover {
+  background: rgba(239, 68, 68, 0.1);
+}

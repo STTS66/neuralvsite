@@ -1,0 +1,204 @@
+.admin-header, .admin-panel {
+  padding: 24px 32px;
+  margin-bottom: 24px;
+}
+
+.admin-title-flex {
+  margin-bottom: 16px;
+}
+
+.admin-tabs {
+  display: flex;
+  gap: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.admin-tab {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  font-weight: 700;
+  padding: 10px 0;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: 0.3s;
+}
+
+.admin-tab:hover {
+  color: #fff;
+}
+
+.admin-tab.active {
+  color: #fff;
+  border-bottom-color: var(--primary);
+}
+
+.section-title {
+  font-size: 1.3rem;
+  font-weight: 800;
+  margin-bottom: 24px;
+}
+
+/* Orders Admin */
+.list-full {
+  width: 100%;
+}
+
+.admin-order-item {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.order-actions-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.actions-flex {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-vt {
+  background: rgba(111, 66, 193, 0.2);
+  color: #d8b4fe;
+  border: 1px solid rgba(111, 66, 193, 0.5);
+}
+
+.btn-vt:hover:not(:disabled) {
+  background: rgba(111, 66, 193, 0.4);
+}
+
+.btn-approve {
+  background: rgba(74, 222, 128, 0.2);
+  color: #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.5);
+}
+
+.btn-approve:hover {
+  background: rgba(74, 222, 128, 0.4);
+}
+
+.btn-reject {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+}
+
+.btn-reject:hover {
+  background: rgba(239, 68, 68, 0.4);
+}
+
+.btn-trash {
+  color: #f87171;
+  padding: 6px;
+}
+
+.btn-trash:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.vt-result {
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 8px;
+}
+
+.vt-result.success {
+  background: rgba(74, 222, 128, 0.1);
+  color: #4ade80;
+}
+
+.vt-result.danger {
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Users List */
+.users-stats {
+  display: flex;
+  gap: 20px;
+}
+
+.stat-box {
+  background: rgba(45, 125, 246, 0.05);
+  border: 1px solid rgba(45, 125, 246, 0.2);
+  padding: 16px;
+  border-radius: 12px;
+  flex: 1;
+}
+
+.table-responsive {
+  overflow-x: auto;
+}
+
+.users-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.users-table th, .users-table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.users-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.role-badge {
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.role-badge.admin {
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+}
+
+.role-badge.user {
+  background: rgba(74, 222, 128, 0.1);
+  color: #4ade80;
+}
+
+@media (max-width: 768px) {
+  .admin-order-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .order-actions-right {
+    width: 100%;
+    align-items: flex-start;
+    margin-top: 16px;
+  }
+}

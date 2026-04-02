@@ -1,0 +1,128 @@
+.guide-container {
+  min-height: calc(100vh - 80px); /* minus navbar */
+  padding: 60px 24px;
+  position: relative;
+}
+
+.guide-glow {
+  top: 30%;
+  left: 30%;
+  width: 800px;
+  height: 800px;
+  background: radial-gradient(ellipse, rgba(150, 150, 150, 0.08) 0%, rgba(0, 0, 0, 0) 60%);
+}
+
+.guide-content {
+  max-width: 900px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 10;
+}
+
+.guide-header {
+  text-align: center;
+  margin-bottom: 64px;
+}
+
+.guide-header h1 {
+  font-size: clamp(2.5rem, 6vw, 3.5rem);
+  font-weight: 900;
+  margin-bottom: 16px;
+}
+
+.guide-subtitle {
+  color: var(--text-muted);
+  font-size: 1.2rem;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.guide-grid {
+  display: grid;
+  gap: 32px;
+}
+
+.guide-step {
+  position: relative;
+  padding: 40px;
+  border-left: 4px solid var(--text-muted);
+  transition: border-color 0.4s ease, box-shadow 0.4s ease, transform 0.4s ease;
+  overflow: hidden;
+}
+
+.guide-step:hover {
+  border-left-color: #fff;
+  transform: translateX(10px);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+}
+
+.step-number {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  font-size: 6rem;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.03);
+  line-height: 1;
+  pointer-events: none;
+}
+
+.step-icon {
+  margin-bottom: 24px;
+  display: inline-flex;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.guide-step h3 {
+  font-size: 1.5rem;
+  font-weight: 800;
+  margin-bottom: 16px;
+}
+
+.guide-step p {
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1.6;
+  max-width: 650px;
+}
+
+.guide-step strong {
+  color: #fff;
+}
+
+.guide-list {
+  padding-left: 20px;
+  color: var(--text-muted);
+  margin-top: 15px;
+  line-height: 1.8;
+}
+
+.guide-list li {
+  margin-bottom: 8px;
+}
+
+.guide-list-bullets {
+  list-style: none;
+  padding: 0;
+  margin-top: 15px;
+  color: var(--text-muted);
+  line-height: 1.8;
+}
+
+.guide-list-bullets li {
+  margin-bottom: 8px;
+}
+
+.note-text {
+  margin-top: 20px;
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 12px 16px;
+  border-radius: 8px;
+  display: inline-block;
+}
