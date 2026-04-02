@@ -42,7 +42,7 @@ services:
     volumes:
       - backend_uploads:/app/uploads
     ports:
-      - "3000:3000"
+      - "3001:3000"
     networks:
       neuralv-net:
         aliases:
@@ -58,7 +58,7 @@ services:
       - backend
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      BACKEND_INTERNAL_URL: http://host.docker.internal:3000/api/internal/support
+      BACKEND_INTERNAL_URL: http://host.docker.internal:3001/api/internal/support
       SUPPORT_INTERNAL_TOKEN: ${SUPPORT_INTERNAL_TOKEN}
       POLL_INTERVAL_SECONDS: 2
     extra_hosts:
@@ -77,7 +77,7 @@ services:
       ADMIN_NOTIFY_BOT_TOKEN: ${ADMIN_NOTIFY_BOT_TOKEN}
       ADMIN_NOTIFY_CHAT_IDS: ${ADMIN_NOTIFY_CHAT_IDS}
       ADMIN_PANEL_URL: ${ADMIN_PANEL_URL}
-      BACKEND_INTERNAL_URL: http://host.docker.internal:3000/api/internal/admin
+      BACKEND_INTERNAL_URL: http://host.docker.internal:3001/api/internal/admin
       SUPPORT_INTERNAL_TOKEN: ${SUPPORT_INTERNAL_TOKEN}
       ADMIN_NOTIFY_POLL_INTERVAL_SECONDS: 5
     extra_hosts:
