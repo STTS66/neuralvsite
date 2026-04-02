@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowRight, Key, Mail, Shield, User } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import { API } from '../api';
 import './Login.css';
 
@@ -38,7 +38,7 @@ const Login: React.FC = () => {
       return;
     }
 
-    setErrorMsg(res.message || 'Ошибка входа');
+    setErrorMsg(res.message || 'Ошибка входа.');
   };
 
   const handleRequestCode = async () => {
@@ -119,7 +119,7 @@ const Login: React.FC = () => {
           </h2>
           <p className="auth-subtitle">
             {isLogin
-              ? 'Войдите в аккаунт, чтобы пользоваться личным кабинетом и поддержкой.'
+              ? 'Войдите в аккаунт, чтобы пользоваться личным кабинетом и встроенной поддержкой.'
               : isAwaitingVerification
                 ? 'Введите код из письма, чтобы завершить регистрацию.'
                 : 'Создайте аккаунт, затем подтвердите email кодом из письма.'}
@@ -260,6 +260,13 @@ const Login: React.FC = () => {
                     : 'Получить код'}
               {!loading && <ArrowRight size={18} />}
             </button>
+
+            {!isLogin && !isAwaitingVerification && (
+              <p className="auth-legal-note">
+                Создавая аккаунт, вы принимаете <Link to="/agreement">пользовательское соглашение</Link> и{' '}
+                <Link to="/rules">правила сервиса</Link>.
+              </p>
+            )}
 
             {!isLogin && isAwaitingVerification && (
               <div className="auth-actions-row">

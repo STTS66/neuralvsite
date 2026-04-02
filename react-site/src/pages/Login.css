@@ -147,6 +147,20 @@
   gap: 8px;
 }
 
+.auth-legal-note {
+  margin-top: -2px;
+  text-align: center;
+  color: rgba(224, 236, 246, 0.64);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.auth-legal-note a {
+  color: #dff6ff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .auth-actions-row {
   margin-top: 8px;
   display: flex;

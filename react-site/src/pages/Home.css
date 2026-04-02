@@ -155,6 +155,34 @@
   justify-content: center;
 }
 
+.hero-highlights {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 30px;
+}
+
+.hero-highlight {
+  padding: 18px 16px;
+  text-align: left;
+  border-radius: 18px;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  background: rgba(7, 16, 31, 0.58);
+}
+
+.hero-highlight h3 {
+  margin-bottom: 10px;
+  color: #f6fbff;
+  font-size: 1rem;
+}
+
+.hero-highlight p {
+  color: rgba(224, 236, 246, 0.72);
+  line-height: 1.65;
+  font-size: 0.94rem;
+}
+
 .features-section,
 .faq-section {
   padding: 120px 24px;
@@ -434,9 +462,43 @@
   line-height: 1.75;
 }
 
+.legal-preview-section {
+  padding: 20px 24px 110px;
+}
+
+.legal-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.legal-preview-card {
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.legal-preview-card h3 {
+  font-size: 1.3rem;
+  color: #fff;
+}
+
+.legal-preview-card p {
+  color: rgba(224, 236, 246, 0.72);
+  line-height: 1.75;
+}
+
+.legal-preview-btn {
+  margin-top: auto;
+}
+
 @media (max-width: 900px) {
+  .hero-highlights,
   .analysis-grid,
-  .trust-grid {
+  .trust-grid,
+  .legal-preview-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -9,6 +9,8 @@ import Guide from './pages/Guide';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Admin from './pages/Admin';
+import Rules from './pages/Rules';
+import Agreement from './pages/Agreement';
 
 function App() {
   const [isSupportOpen, setIsSupportOpen] = useState(false);
@@ -38,6 +40,8 @@ function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/admin" element={<Admin />} />
+          <Route path="/rules" element={<Rules />} />
+          <Route path="/agreement" element={<Agreement />} />
         </Routes>
       </main>
       <Footer />
