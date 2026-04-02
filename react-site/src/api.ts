@@ -144,7 +144,24 @@ export const API = {
         method: 'POST',
         body: formData,
       });
-      return await response.json();
+      const contentType = response.headers.get('content-type') || '';
+
+      if (contentType.includes('application/json')) {
+        return await response.json();
+      }
+
+      if (response.status === 413) {
+        return {
+          success: false,
+          message: 'Файл слишком большой. Загрузите файл меньше 64 МБ.',
+        };
+      }
+
+      const text = await response.text();
+      return {
+        success: false,
+        message: text.trim() || `Ошибка сервера при отправке заявки (${response.status}).`,
+      };
     } catch (error) {
       console.error('Submit Error:', error);
       return { success: false, message: 'Ошибка соединения с сервером' };
