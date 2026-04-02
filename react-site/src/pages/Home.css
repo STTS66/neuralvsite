@@ -416,10 +416,12 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
+  align-items: start;
 }
 
 .faq-item {
   overflow: hidden;
+  align-self: start;
   transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
