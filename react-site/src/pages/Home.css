@@ -413,8 +413,8 @@
 }
 
 .faq-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
 }
 
@@ -498,7 +498,8 @@
   .hero-highlights,
   .analysis-grid,
   .trust-grid,
-  .legal-preview-grid {
+  .legal-preview-grid,
+  .faq-list {
     grid-template-columns: 1fr;
   }
 }

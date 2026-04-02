@@ -99,6 +99,19 @@
   margin-bottom: 15px;
 }
 
+.profile-account-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  background: rgba(125, 211, 252, 0.08);
+  color: #e8f6ff;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
 .profile-form-group {
   display: flex;
   flex-direction: column;

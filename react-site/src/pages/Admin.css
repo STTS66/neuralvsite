@@ -40,6 +40,102 @@
   margin-bottom: 24px;
 }
 
+.admin-search-box {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.admin-search-input {
+  flex: 1;
+}
+
+.admin-inline-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 10px 0 14px;
+  color: rgba(224, 236, 246, 0.72);
+  font-size: 0.9rem;
+}
+
+.admin-user-profile {
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.admin-user-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.admin-user-head h3 {
+  margin: 0;
+  font-size: 1.45rem;
+}
+
+.admin-user-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.admin-user-secondary-meta {
+  margin-top: 0;
+  margin-bottom: 18px;
+}
+
+.admin-ban-box {
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(248, 113, 113, 0.14);
+  background: rgba(44, 12, 12, 0.18);
+  margin-bottom: 20px;
+}
+
+.admin-ban-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  color: #ffd0d0;
+}
+
+.admin-ban-controls {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) auto auto;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.admin-ban-hours,
+.admin-ban-reason {
+  min-width: 0;
+}
+
+.admin-recent-orders h4 {
+  margin-bottom: 14px;
+}
+
+.compact-order-item {
+  padding: 16px;
+}
+
+.table-link-button {
+  border: none;
+  background: none;
+  color: #9edcff;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 /* Orders Admin */
 .list-full {
   width: 100%;
@@ -192,6 +288,19 @@
 }
 
 @media (max-width: 768px) {
+  .admin-search-box,
+  .admin-ban-controls,
+  .admin-user-head {
+    flex-direction: column;
+    grid-template-columns: 1fr;
+  }
+
+  .admin-user-stats-grid,
+  .users-stats {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
   .admin-order-item {
     flex-direction: column;
     align-items: flex-start;

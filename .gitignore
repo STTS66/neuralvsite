@@ -17,6 +17,9 @@ react-site/dist/
 
 telegram-support-bot/__pycache__/
 telegram-support-bot/*.pyc
+telegram-admin-bot/__pycache__/
+telegram-admin-bot/*.pyc
+ap1ii/
 
 node_modules/
 dist/

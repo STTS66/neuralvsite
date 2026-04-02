@@ -51,6 +51,21 @@ services:
       SUPPORT_INTERNAL_TOKEN: ${SUPPORT_INTERNAL_TOKEN}
       POLL_INTERVAL_SECONDS: 2
 
+  telegram-admin-bot:
+    build:
+      context: ./telegram-admin-bot
+    container_name: neuralv-telegram-admin-bot
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      ADMIN_NOTIFY_BOT_TOKEN: ${ADMIN_NOTIFY_BOT_TOKEN}
+      ADMIN_NOTIFY_CHAT_IDS: ${ADMIN_NOTIFY_CHAT_IDS}
+      ADMIN_PANEL_URL: ${ADMIN_PANEL_URL}
+      BACKEND_INTERNAL_URL: http://backend:3000/api/internal/admin
+      SUPPORT_INTERNAL_TOKEN: ${SUPPORT_INTERNAL_TOKEN}
+      ADMIN_NOTIFY_POLL_INTERVAL_SECONDS: 5
+
   frontend:
     build:
       context: ./react-site

@@ -176,8 +176,57 @@ function generateVerificationCode() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
+async function generateUserAccountId() {
+  let accountId = '';
+
+  while (!accountId) {
+    const candidate = `NV-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const existing = await getAsync('SELECT id FROM users WHERE account_id = ? LIMIT 1', [
+      candidate,
+    ]);
+
+    if (!existing) {
+      accountId = candidate;
+    }
+  }
+
+  return accountId;
+}
+
 function hashVerificationCode(code) {
   return crypto.createHash('sha256').update(String(code)).digest('hex');
+}
+
+function getActiveBanInfo(user) {
+  if (!user?.banned_until) {
+    return null;
+  }
+
+  const bannedUntil = new Date(user.banned_until);
+  if (Number.isNaN(bannedUntil.getTime()) || bannedUntil.getTime() <= Date.now()) {
+    return null;
+  }
+
+  return {
+    bannedUntilIso: bannedUntil.toISOString(),
+    bannedUntilLabel: bannedUntil.toLocaleString('ru-RU'),
+    reason: normalizeText(user.ban_reason, 240) || 'Причина не указана.',
+  };
+}
+
+function buildBanMessage(user) {
+  const banInfo = getActiveBanInfo(user);
+  if (!banInfo) {
+    return '';
+  }
+
+  return `Аккаунт временно заблокирован до ${banInfo.bannedUntilLabel}. Причина: ${banInfo.reason}`;
+}
+
+function removeFileIfExists(filePath) {
+  if (filePath && fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
 }
 
 async function sendRegistrationCodeEmail({ email, username, code }) {
@@ -408,7 +457,11 @@ async function getRegisteredSupportUser(userId) {
   }
 
   return getAsync(
-    'SELECT id, username, email, role, display_name FROM users WHERE id = ?',
+    `
+      SELECT id, account_id, username, email, role, display_name, banned_until, ban_reason
+      FROM users
+      WHERE id = ?
+    `,
     [normalizedUserId],
   );
 }
@@ -569,13 +622,16 @@ async function initializeDatabase() {
   await execAsync(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
+      account_id TEXT UNIQUE,
       username TEXT UNIQUE,
       email TEXT UNIQUE,
       password TEXT,
       role TEXT DEFAULT 'user',
       email_verified BOOLEAN NOT NULL DEFAULT TRUE,
       display_name TEXT,
-      avatar TEXT
+      avatar TEXT,
+      banned_until TIMESTAMPTZ,
+      ban_reason TEXT
     );
 
     CREATE TABLE IF NOT EXISTS email_verification_requests (
@@ -597,6 +653,8 @@ async function initializeDatabase() {
       file_path TEXT,
       status TEXT DEFAULT 'pending',
       license_key TEXT,
+      admin_notified BOOLEAN NOT NULL DEFAULT FALSE,
+      admin_notified_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ,
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
@@ -647,6 +705,7 @@ async function initializeDatabase() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_account_id ON users(account_id);
     CREATE INDEX IF NOT EXISTS idx_email_verification_requests_expires_at ON email_verification_requests(expires_at);
     CREATE INDEX IF NOT EXISTS idx_email_verification_requests_username ON email_verification_requests(username);
     CREATE INDEX IF NOT EXISTS idx_support_conversations_client_id ON support_conversations(client_id);
@@ -661,6 +720,31 @@ async function initializeDatabase() {
   `);
 
   await execAsync(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS account_id TEXT;
+  `);
+
+  await execAsync(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS banned_until TIMESTAMPTZ;
+  `);
+
+  await execAsync(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS ban_reason TEXT;
+  `);
+
+  await execAsync(`
+    ALTER TABLE orders
+    ADD COLUMN IF NOT EXISTS admin_notified BOOLEAN NOT NULL DEFAULT FALSE;
+  `);
+
+  await execAsync(`
+    ALTER TABLE orders
+    ADD COLUMN IF NOT EXISTS admin_notified_at TIMESTAMPTZ;
+  `);
+
+  await execAsync(`
     ALTER TABLE support_messages
     ADD COLUMN IF NOT EXISTS media_type TEXT;
   `);
@@ -670,19 +754,31 @@ async function initializeDatabase() {
     ADD COLUMN IF NOT EXISTS media_url TEXT;
   `);
 
+  const usersWithoutAccountId = await allAsync(
+    'SELECT id FROM users WHERE account_id IS NULL OR account_id = \'\'',
+  );
+
+  for (const user of usersWithoutAccountId) {
+    await runAsync('UPDATE users SET account_id = ? WHERE id = ?', [
+      await generateUserAccountId(),
+      user.id,
+    ]);
+  }
+
   const existingAdmin = await getAsync(
     "SELECT id FROM users WHERE role = 'admin' LIMIT 1",
   );
 
   if (!existingAdmin) {
     const passwordHash = await bcrypt.hash(DEFAULT_ADMIN_PASSWORD, 10);
+    const accountId = await generateUserAccountId();
     await runAsync(
       `
-        INSERT INTO users (username, email, password, role)
-        VALUES (?, ?, ?, 'admin')
+        INSERT INTO users (account_id, username, email, password, role)
+        VALUES (?, ?, ?, ?, 'admin')
         RETURNING id
       `,
-      [DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_EMAIL, passwordHash],
+      [accountId, DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_EMAIL, passwordHash],
     );
     console.log(`Seeded default admin "${DEFAULT_ADMIN_USERNAME}".`);
   }
@@ -899,19 +995,20 @@ app.post(
     }
 
     try {
+      const accountId = await generateUserAccountId();
       const result = await runAsync(
         `
-          INSERT INTO users (username, email, password, role, email_verified)
-          VALUES (?, ?, ?, 'user', TRUE)
+          INSERT INTO users (account_id, username, email, password, role, email_verified)
+          VALUES (?, ?, ?, ?, 'user', TRUE)
           RETURNING id
         `,
-        [request.username, email, request.password_hash],
+        [accountId, request.username, email, request.password_hash],
       );
 
       await runAsync('DELETE FROM email_verification_requests WHERE email = ?', [email]);
 
       const user = await getAsync(
-        'SELECT id, username, role FROM users WHERE id = ?',
+        'SELECT id, account_id, username, role FROM users WHERE id = ?',
         [result.lastID],
       );
 
@@ -956,10 +1053,21 @@ app.post(
       return;
     }
 
+    const banInfo = getActiveBanInfo(user);
+    if (banInfo) {
+      res.status(423).json({
+        success: false,
+        message: buildBanMessage(user),
+        bannedUntil: banInfo.bannedUntilIso,
+      });
+      return;
+    }
+
     res.json({
       success: true,
       user: {
         id: user.id,
+        accountId: user.account_id,
         username: user.username,
         role: user.role,
       },
@@ -997,26 +1105,39 @@ app.post(
     let user = await getAsync('SELECT * FROM users WHERE email = ?', [email]);
 
     if (!user) {
+      const accountId = await generateUserAccountId();
       const insertResult = await runAsync(
         `
-          INSERT INTO users (username, email, password, role)
-          VALUES (?, ?, 'GOOGLE_AUTH_USER', 'user')
+          INSERT INTO users (account_id, username, email, password, role)
+          VALUES (?, ?, ?, 'GOOGLE_AUTH_USER', 'user')
           RETURNING id
         `,
-        [name, email],
+        [accountId, name, email],
       );
 
       user = {
         id: insertResult.lastID,
+        account_id: accountId,
         username: name,
         role: 'user',
       };
+    }
+
+    const banInfo = getActiveBanInfo(user);
+    if (banInfo) {
+      res.status(423).json({
+        success: false,
+        message: buildBanMessage(user),
+        bannedUntil: banInfo.bannedUntilIso,
+      });
+      return;
     }
 
     res.json({
       success: true,
       user: {
         id: user.id,
+        accountId: user.account_id,
         username: user.username,
         role: user.role,
       },
@@ -1040,6 +1161,14 @@ app.post(
     const link = normalizeText(req.body.link, 2000);
     const userId = toNullableInteger(req.body.user_id);
     const filePath = req.file ? req.file.path : null;
+    const user = await getAsync(
+      `
+        SELECT id, account_id, username, banned_until, ban_reason
+        FROM users
+        WHERE id = ?
+      `,
+      [userId],
+    );
 
     if (!link && !filePath) {
       res
@@ -1049,10 +1178,27 @@ app.post(
     }
 
     const createdAt = nowIso();
+    if (!user) {
+      removeFileIfExists(filePath);
+      res.status(404).json({ success: false, message: 'Пользователь не найден.' });
+      return;
+    }
+
+    const banInfo = getActiveBanInfo(user);
+    if (banInfo) {
+      removeFileIfExists(filePath);
+      res.status(423).json({
+        success: false,
+        message: buildBanMessage(user),
+        bannedUntil: banInfo.bannedUntilIso,
+      });
+      return;
+    }
+
     const result = await runAsync(
       `
-        INSERT INTO orders (user_id, link, file_path, status, created_at)
-        VALUES (?, ?, ?, 'pending', ?)
+        INSERT INTO orders (user_id, link, file_path, status, admin_notified, created_at)
+        VALUES (?, ?, ?, 'pending', FALSE, ?)
         RETURNING id
       `,
       [userId, link || null, filePath, createdAt],
@@ -1061,6 +1207,7 @@ app.post(
     res.json({
       success: true,
       id: result.lastID,
+      accountId: user.account_id,
       date: createdAt,
       link,
       status: 'pending',
@@ -1141,7 +1288,7 @@ app.get(
     const userId = toNullableInteger(req.query.user_id);
     const params = [];
     let sql = `
-      SELECT orders.*, users.username
+      SELECT orders.*, users.username, users.account_id
       FROM orders
       LEFT JOIN users ON users.id = orders.user_id
     `;
@@ -1158,6 +1305,7 @@ app.get(
       rows.map((row) => ({
         id: row.id,
         user_id: row.user_id,
+        accountId: row.account_id,
         username: row.username || 'Unknown',
         date: row.created_at,
         link: row.link,
@@ -1173,9 +1321,167 @@ app.get(
   '/api/users',
   asyncRoute(async (_req, res) => {
     const rows = await allAsync(
-      'SELECT id, username, email, role FROM users ORDER BY id DESC',
+      `
+        SELECT
+          users.id,
+          users.account_id,
+          users.username,
+          users.email,
+          users.role,
+          users.banned_until,
+          COUNT(orders.id)::int AS order_count
+        FROM users
+        LEFT JOIN orders ON orders.user_id = users.id
+        GROUP BY users.id
+        ORDER BY users.id DESC
+      `,
     );
     res.json(rows);
+  }),
+);
+
+app.get(
+  '/api/admin/users/search',
+  asyncRoute(async (req, res) => {
+    const accountId = normalizeText(req.query.accountId, 40).toUpperCase();
+
+    if (!accountId) {
+      res.status(400).json({ success: false, message: 'accountId is required.' });
+      return;
+    }
+
+    const user = await getAsync(
+      `
+        SELECT id, account_id, username, email, role, display_name, avatar, banned_until, ban_reason
+        FROM users
+        WHERE account_id = ?
+      `,
+      [accountId],
+    );
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found.' });
+      return;
+    }
+
+    const orderStats = await getAsync(
+      `
+        SELECT
+          COUNT(*)::int AS total_orders,
+          COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_orders,
+          COUNT(*) FILTER (WHERE status = 'active')::int AS approved_orders,
+          COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected_orders,
+          MAX(created_at) AS last_order_at
+        FROM orders
+        WHERE user_id = ?
+      `,
+      [user.id],
+    );
+
+    const supportStats = await getAsync(
+      `
+        SELECT
+          COUNT(*)::int AS conversation_count,
+          MAX(updated_at) AS last_support_activity_at
+        FROM support_conversations
+        WHERE user_id = ?
+      `,
+      [user.id],
+    );
+
+    const recentOrders = await allAsync(
+      `
+        SELECT id, link, status, created_at, license_key
+        FROM orders
+        WHERE user_id = ?
+        ORDER BY id DESC
+        LIMIT 6
+      `,
+      [user.id],
+    );
+
+    const banInfo = getActiveBanInfo(user);
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        accountId: user.account_id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        displayName: user.display_name,
+        avatar: user.avatar,
+        bannedUntil: user.banned_until,
+        banReason: user.ban_reason,
+        isBanned: Boolean(banInfo),
+      },
+      stats: {
+        totalOrders: Number(orderStats?.total_orders || 0),
+        pendingOrders: Number(orderStats?.pending_orders || 0),
+        approvedOrders: Number(orderStats?.approved_orders || 0),
+        rejectedOrders: Number(orderStats?.rejected_orders || 0),
+        supportConversations: Number(supportStats?.conversation_count || 0),
+        lastOrderAt: orderStats?.last_order_at || null,
+        lastSupportActivityAt: supportStats?.last_support_activity_at || null,
+      },
+      recentOrders: recentOrders.map((row) => ({
+        id: row.id,
+        link: row.link,
+        status: row.status,
+        createdAt: row.created_at,
+        licenseKey: row.license_key,
+      })),
+    });
+  }),
+);
+
+app.post(
+  '/api/admin/users/ban',
+  asyncRoute(async (req, res) => {
+    const accountId = normalizeText(req.body.accountId, 40).toUpperCase();
+    const durationHours = Number(req.body.durationHours || 0);
+    const reason = normalizeText(req.body.reason, 240) || 'Причина не указана.';
+
+    if (!accountId || !Number.isFinite(durationHours) || durationHours <= 0) {
+      res.status(400).json({
+        success: false,
+        message: 'accountId and positive durationHours are required.',
+      });
+      return;
+    }
+
+    const user = await getAsync('SELECT id FROM users WHERE account_id = ?', [accountId]);
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found.' });
+      return;
+    }
+
+    const bannedUntil = new Date(Date.now() + durationHours * 60 * 60 * 1000).toISOString();
+    await runAsync(
+      'UPDATE users SET banned_until = ?, ban_reason = ? WHERE account_id = ?',
+      [bannedUntil, reason, accountId],
+    );
+
+    res.json({ success: true, bannedUntil, reason });
+  }),
+);
+
+app.post(
+  '/api/admin/users/unban',
+  asyncRoute(async (req, res) => {
+    const accountId = normalizeText(req.body.accountId, 40).toUpperCase();
+    if (!accountId) {
+      res.status(400).json({ success: false, message: 'accountId is required.' });
+      return;
+    }
+
+    await runAsync(
+      'UPDATE users SET banned_until = NULL, ban_reason = NULL WHERE account_id = ?',
+      [accountId],
+    );
+
+    res.json({ success: true });
   }),
 );
 
@@ -1219,7 +1525,7 @@ app.get(
   asyncRoute(async (req, res) => {
     const user = await getAsync(
       `
-        SELECT id, username, email, role, display_name, avatar
+        SELECT id, account_id, username, email, role, display_name, avatar, banned_until, ban_reason
         FROM users
         WHERE id = ?
       `,
@@ -1326,6 +1632,16 @@ app.post(
       return;
     }
 
+    const banInfo = getActiveBanInfo(supportUser);
+    if (banInfo) {
+      res.status(423).json({
+        success: false,
+        message: buildBanMessage(supportUser),
+        bannedUntil: banInfo.bannedUntilIso,
+      });
+      return;
+    }
+
     const conversation = await getOrCreateSupportConversation({
       clientId,
       userId: supportUser.id,
@@ -1364,6 +1680,16 @@ app.get(
       return;
     }
 
+    const banInfo = getActiveBanInfo(supportUser);
+    if (banInfo) {
+      res.status(423).json({
+        success: false,
+        message: buildBanMessage(supportUser),
+        bannedUntil: banInfo.bannedUntilIso,
+      });
+      return;
+    }
+
     const conversation = await getSupportConversationByClient(conversationId, clientId);
     if (!conversation || Number(conversation.user_id) !== supportUser.id) {
       res.status(404).json({ success: false, message: 'Conversation not found.' });
@@ -1390,6 +1716,16 @@ app.get(
       res.status(403).json({
         success: false,
         message: 'Support is available only to registered users.',
+      });
+      return;
+    }
+
+    const banInfo = getActiveBanInfo(supportUser);
+    if (banInfo) {
+      res.status(423).json({
+        success: false,
+        message: buildBanMessage(supportUser),
+        bannedUntil: banInfo.bannedUntilIso,
       });
       return;
     }
@@ -1429,6 +1765,16 @@ app.post(
       res.status(403).json({
         success: false,
         message: 'Support is available only to registered users.',
+      });
+      return;
+    }
+
+    const banInfo = getActiveBanInfo(supportUser);
+    if (banInfo) {
+      res.status(423).json({
+        success: false,
+        message: buildBanMessage(supportUser),
+        bannedUntil: banInfo.bannedUntilIso,
       });
       return;
     }
@@ -1508,6 +1854,70 @@ app.post(
 );
 
 app.use('/api/internal', requireInternalToken);
+
+app.get(
+  '/api/internal/admin/orders/outbox',
+  asyncRoute(async (req, res) => {
+    const limit = Math.max(1, Math.min(50, toNullableInteger(req.query.limit) || 20));
+
+    const rows = await allAsync(
+      `
+        SELECT
+          orders.id,
+          orders.link,
+          orders.file_path,
+          orders.created_at,
+          users.id AS user_id,
+          users.account_id,
+          users.username,
+          users.email
+        FROM orders
+        LEFT JOIN users ON users.id = orders.user_id
+        WHERE COALESCE(orders.admin_notified, FALSE) = FALSE
+        ORDER BY orders.id ASC
+        LIMIT ?
+      `,
+      [limit],
+    );
+
+    res.json({
+      success: true,
+      items: rows.map((row) => ({
+        id: row.id,
+        userId: row.user_id,
+        accountId: row.account_id,
+        username: row.username || 'Unknown',
+        email: row.email || null,
+        link: row.link || null,
+        hasFile: Boolean(row.file_path),
+        createdAt: row.created_at,
+      })),
+    });
+  }),
+);
+
+app.post(
+  '/api/internal/admin/orders/:id/delivered',
+  asyncRoute(async (req, res) => {
+    const orderId = toNullableInteger(req.params.id);
+    if (!orderId) {
+      res.status(400).json({ success: false, message: 'orderId is required.' });
+      return;
+    }
+
+    await runAsync(
+      `
+        UPDATE orders
+        SET admin_notified = TRUE,
+            admin_notified_at = ?
+        WHERE id = ?
+      `,
+      [nowIso(), orderId],
+    );
+
+    res.json({ success: true });
+  }),
+);
 
 app.get(
   '/api/internal/support/state',

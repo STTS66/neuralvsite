@@ -28,6 +28,39 @@ export interface SupportSessionResponse {
   message?: string;
 }
 
+export interface AdminUserSearchResponse {
+  success: boolean;
+  user?: {
+    id: number;
+    accountId: string;
+    username: string;
+    email: string;
+    role: string;
+    displayName?: string | null;
+    avatar?: string | null;
+    bannedUntil?: string | null;
+    banReason?: string | null;
+    isBanned: boolean;
+  };
+  stats?: {
+    totalOrders: number;
+    pendingOrders: number;
+    approvedOrders: number;
+    rejectedOrders: number;
+    supportConversations: number;
+    lastOrderAt?: string | null;
+    lastSupportActivityAt?: string | null;
+  };
+  recentOrders?: Array<{
+    id: number;
+    link?: string | null;
+    status: string;
+    createdAt: string;
+    licenseKey?: string | null;
+  }>;
+  message?: string;
+}
+
 export const API = {
   getUsers: async () => {
     try {
@@ -188,6 +221,46 @@ export const API = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bodyData),
+      });
+      return await response.json();
+    } catch (error: any) {
+      console.error(error);
+      return { success: false, message: error.message };
+    }
+  },
+
+  searchAdminUserByAccountId: async (accountId: string): Promise<AdminUserSearchResponse> => {
+    try {
+      const response = await fetch(
+        `${API_URL}/admin/users/search?accountId=${encodeURIComponent(accountId)}`,
+      );
+      return await response.json();
+    } catch (error: any) {
+      console.error(error);
+      return { success: false, message: error.message };
+    }
+  },
+
+  banUserByAccountId: async (accountId: string, durationHours: number, reason: string) => {
+    try {
+      const response = await fetch(`${API_URL}/admin/users/ban`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId, durationHours, reason }),
+      });
+      return await response.json();
+    } catch (error: any) {
+      console.error(error);
+      return { success: false, message: error.message };
+    }
+  },
+
+  unbanUserByAccountId: async (accountId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/admin/users/unban`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId }),
       });
       return await response.json();
     } catch (error: any) {
