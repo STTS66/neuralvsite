@@ -1,6 +1,8 @@
 import html
 import logging
 import os
+import socket
+import subprocess
 from datetime import datetime
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 from urllib.parse import quote
@@ -96,6 +98,8 @@ class AdminNotifyApi:
 
 
 def replace_host(parsed_url: SplitResult, hostname: str) -> str:
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
     port = f":{parsed_url.port}" if parsed_url.port else ""
     return urlunsplit(
         (
@@ -106,6 +110,38 @@ def replace_host(parsed_url: SplitResult, hostname: str) -> str:
             parsed_url.fragment,
         )
     )
+
+
+def resolve_host_ips(hostname: str) -> list[str]:
+    resolved: list[str] = []
+    seen: set[str] = set()
+
+    def add(candidate: str | None) -> None:
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            resolved.append(candidate)
+
+    try:
+        for result in socket.getaddrinfo(hostname, None):
+            add(result[4][0])
+    except OSError:
+        pass
+
+    try:
+        completed = subprocess.run(
+            ["getent", "hosts", hostname],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        for line in completed.stdout.splitlines():
+            parts = line.split()
+            if parts:
+                add(parts[0])
+    except OSError:
+        pass
+
+    return resolved
 
 
 def build_backend_base_urls(base_url: str) -> list[str]:
@@ -128,6 +164,10 @@ def build_backend_base_urls(base_url: str) -> list[str]:
     elif parsed_url.hostname:
         add(replace_host(parsed_url, "backend"))
         add(replace_host(parsed_url, "neuralv-backend"))
+
+    for hostname in ("neuralv-backend", "backend"):
+        for address in resolve_host_ips(hostname):
+            add(replace_host(parsed_url, address))
 
     return candidates
 
