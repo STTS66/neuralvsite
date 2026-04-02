@@ -41,6 +41,8 @@ const SUPPORT_ADMIN_TELEGRAM_IDS = (process.env.SUPPORT_ADMIN_TELEGRAM_IDS || ''
 const DATABASE_URL =
   process.env.DATABASE_URL || 'postgresql://postgres:postgres@postgres:5432/neuralv';
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
+const ORDER_UPLOAD_MAX_SIZE = 64 * 1024 * 1024;
+const ORDER_ALLOWED_LINK_PROTOCOLS = new Set(['http:', 'https:']);
 
 function ensureDirectory(targetPath) {
   if (!fs.existsSync(targetPath)) {
@@ -178,6 +180,45 @@ function normalizeEmail(value) {
 
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function sanitizeFilenamePart(value, maxLength = 80) {
+  const sanitized = String(value || '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, maxLength);
+
+  return sanitized || 'file';
+}
+
+function buildStoredUploadName(originalName) {
+  const extension = sanitizeFilenamePart(path.extname(String(originalName || '')), 16) || '.bin';
+  const basename = sanitizeFilenamePart(path.basename(String(originalName || ''), path.extname(String(originalName || ''))), 80);
+  const uniqueSuffix = crypto.randomBytes(6).toString('hex');
+  return `${Date.now()}-${basename}-${uniqueSuffix}${extension}`;
+}
+
+function validateOrderLink(link) {
+  if (!link) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(link);
+
+    if (!ORDER_ALLOWED_LINK_PROTOCOLS.has(parsed.protocol)) {
+      return 'Укажите ссылку в формате http:// или https://.';
+    }
+
+    if (!parsed.hostname) {
+      return 'Укажите корректную ссылку на проект или пост.';
+    }
+
+    return '';
+  } catch (_error) {
+    return 'Укажите корректную ссылку на проект или пост.';
+  }
 }
 
 function generateVerificationCode() {
@@ -616,11 +657,18 @@ const storage = multer.diskStorage({
     callback(null, UPLOAD_DIR);
   },
   filename: (_req, file, callback) => {
-    callback(null, `${Date.now()}-${file.originalname}`);
+    callback(null, buildStoredUploadName(file.originalname));
   },
 });
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: ORDER_UPLOAD_MAX_SIZE,
+    files: 1,
+    fields: 10,
+  },
+});
 const supportMediaUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
@@ -1172,6 +1220,35 @@ app.post(
     const link = normalizeText(req.body.link, 2000);
     const userId = toNullableInteger(req.body.user_id);
     const filePath = req.file ? req.file.path : null;
+
+    if (!userId || userId <= 0) {
+      removeFileIfExists(filePath);
+      res.status(400).json({
+        success: false,
+        message: 'Некорректный идентификатор пользователя.',
+      });
+      return;
+    }
+
+    const linkValidationMessage = validateOrderLink(link);
+    if (linkValidationMessage) {
+      removeFileIfExists(filePath);
+      res.status(400).json({
+        success: false,
+        message: linkValidationMessage,
+      });
+      return;
+    }
+
+    if (req.file && Number(req.file.size || 0) <= 0) {
+      removeFileIfExists(filePath);
+      res.status(400).json({
+        success: false,
+        message: 'Прикрепленный файл пустой. Выберите другой файл.',
+      });
+      return;
+    }
+
     const user = await getAsync(
       `
         SELECT id, account_id, username, banned_until, ban_reason
@@ -2341,6 +2418,21 @@ app.use('/api', (req, res) => {
 
 app.use((error, _req, res, _next) => {
   console.error('[SERVER ERROR]', error);
+
+  if (error instanceof multer.MulterError) {
+    const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    const message =
+      error.code === 'LIMIT_FILE_SIZE'
+        ? 'Файл слишком большой. Загрузите файл меньше 64 МБ.'
+        : 'Не удалось обработать файл в заявке.';
+
+    res.status(status).json({
+      success: false,
+      message,
+    });
+    return;
+  }
+
   res.status(error.status || 500).json({
     success: false,
     message: error.message || 'Internal Server Error',
