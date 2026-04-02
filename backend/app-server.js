@@ -52,6 +52,14 @@ function buildUploadPublicPath(filePath) {
   return `/uploads/${path.relative(UPLOAD_DIR, filePath).replace(/\\/g, '/')}`;
 }
 
+function buildOrderFileUrl(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return null;
+  }
+
+  return buildUploadPublicPath(filePath);
+}
+
 function saveSupportMediaFile(file) {
   if (!file) {
     return null;
@@ -1315,6 +1323,7 @@ app.get(
         status: row.status,
         licenseKey: row.license_key,
         hasFile: Boolean(row.file_path),
+        fileUrl: buildOrderFileUrl(row.file_path),
       })),
     );
   }),
@@ -1394,7 +1403,7 @@ app.get(
 
     const recentOrders = await allAsync(
       `
-        SELECT id, link, status, created_at, license_key
+        SELECT id, link, file_path, status, created_at, license_key
         FROM orders
         WHERE user_id = ?
         ORDER BY id DESC
@@ -1431,6 +1440,7 @@ app.get(
       recentOrders: recentOrders.map((row) => ({
         id: row.id,
         link: row.link,
+        fileUrl: buildOrderFileUrl(row.file_path),
         status: row.status,
         createdAt: row.created_at,
         licenseKey: row.license_key,

@@ -54,6 +54,7 @@ export interface AdminUserSearchResponse {
   recentOrders?: Array<{
     id: number;
     link?: string | null;
+    fileUrl?: string | null;
     status: string;
     createdAt: string;
     licenseKey?: string | null;

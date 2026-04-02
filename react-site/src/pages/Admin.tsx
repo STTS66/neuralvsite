@@ -14,6 +14,7 @@ type OrderItem = {
   username: string;
   date: string;
   link?: string | null;
+  fileUrl?: string | null;
   status: string;
   licenseKey?: string | null;
   hasFile?: boolean;
@@ -335,6 +336,16 @@ const Admin: React.FC = () => {
                           <FileBox size={16} />
                           {order.link || 'Файл прикреплен'}
                         </div>
+                        {order.fileUrl ? (
+                          <a
+                            className="btn btn-sm btn-outline admin-download-link"
+                            href={order.fileUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Скачать файл
+                          </a>
+                        ) : null}
                         <div className="order-date mt-2">{order.date}</div>
                         {order.licenseKey ? (
                           <div className="text-success mt-1" style={{ fontSize: '0.85rem' }}>
@@ -551,6 +562,16 @@ const Admin: React.FC = () => {
                             <FileBox size={16} />
                             {order.link || 'Файл прикреплен'}
                           </div>
+                          {order.fileUrl ? (
+                            <a
+                              className="btn btn-sm btn-outline admin-download-link mt-2"
+                              href={order.fileUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Скачать файл
+                            </a>
+                          ) : null}
                           <div className="order-date">{order.createdAt}</div>
                         </div>
                       ))
