@@ -2,6 +2,7 @@ import html
 import logging
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -36,7 +37,7 @@ class SupportApi:
         self.client = httpx.AsyncClient(
             base_url=BACKEND_INTERNAL_URL,
             headers={"x-internal-token": SUPPORT_INTERNAL_TOKEN},
-            timeout=15.0,
+            timeout=30.0,
         )
 
     async def close(self) -> None:
@@ -90,14 +91,34 @@ class SupportApi:
         self,
         conversation_id: int,
         text: str,
-        sender_name: str,
     ) -> dict[str, Any]:
         response = await self.client.post(
             "/reply",
             json={
                 "conversationId": conversation_id,
                 "text": text,
-                "senderName": sender_name,
+                "senderName": "Поддержка",
+            },
+        )
+        return response.json()
+
+    async def send_support_reply_media(
+        self,
+        conversation_id: int,
+        text: str,
+        content: bytes,
+        filename: str,
+        content_type: str,
+    ) -> dict[str, Any]:
+        response = await self.client.post(
+            "/reply-media",
+            data={
+                "conversationId": str(conversation_id),
+                "text": text,
+                "senderName": "Поддержка",
+            },
+            files={
+                "media": (filename, content, content_type),
             },
         )
         return response.json()
@@ -142,6 +163,33 @@ def build_help_text() -> str:
         "/setchat - привязать текущую группу для тикетов\n"
         "/settopic - привязать текущую тему форума"
     )
+
+
+async def extract_media_payload(message) -> dict[str, Any] | None:
+    if message.photo:
+        photo = message.photo[-1]
+        telegram_file = await photo.get_file()
+        content = bytes(await telegram_file.download_as_bytearray())
+        extension = Path(telegram_file.file_path or "").suffix or ".jpg"
+        return {
+            "content": content,
+            "filename": f"support-photo-{message.message_id}{extension}",
+            "content_type": "image/jpeg",
+        }
+
+    if message.document and (message.document.mime_type or "").startswith("image/"):
+        telegram_file = await message.document.get_file()
+        content = bytes(await telegram_file.download_as_bytearray())
+        extension = Path(
+            message.document.file_name or telegram_file.file_path or ""
+        ).suffix or ".jpg"
+        return {
+            "content": content,
+            "filename": f"support-image-{message.message_id}{extension}",
+            "content_type": message.document.mime_type or "image/jpeg",
+        }
+
+    return None
 
 
 async def get_api(context: ContextTypes.DEFAULT_TYPE) -> SupportApi:
@@ -240,7 +288,7 @@ async def sync_outbox(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def reply_bridge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
-    if not message or not message.reply_to_message or not message.text:
+    if not message or not message.reply_to_message:
         return
 
     api = await get_api(context)
@@ -256,16 +304,24 @@ async def reply_bridge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not target:
         return
 
-    sender_name = (
-        update.effective_user.full_name
-        or update.effective_user.username
-        or "Поддержка"
-    )
-    result = await api.send_support_reply(
-        target["conversationId"],
-        message.text,
-        sender_name,
-    )
+    text = message.text or message.caption or ""
+    media_payload = await extract_media_payload(message)
+
+    if media_payload:
+        result = await api.send_support_reply_media(
+            target["conversationId"],
+            text,
+            media_payload["content"],
+            media_payload["filename"],
+            media_payload["content_type"],
+        )
+    elif text:
+        result = await api.send_support_reply(
+            target["conversationId"],
+            text,
+        )
+    else:
+        return
 
     if not result.get("success"):
         await message.reply_text(
@@ -309,7 +365,12 @@ def main() -> None:
     application.add_handler(CommandHandler("setchat", set_chat_command))
     application.add_handler(CommandHandler("settopic", set_topic_command))
     application.add_handler(
-        MessageHandler(filters.TEXT & filters.REPLY & ~filters.COMMAND, reply_bridge)
+        MessageHandler(
+            (filters.TEXT | filters.PHOTO | filters.Document.IMAGE)
+            & filters.REPLY
+            & ~filters.COMMAND,
+            reply_bridge,
+        )
     )
 
     application.job_queue.run_repeating(

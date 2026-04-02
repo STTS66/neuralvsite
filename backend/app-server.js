@@ -48,6 +48,28 @@ function ensureDirectory(targetPath) {
   }
 }
 
+function buildUploadPublicPath(filePath) {
+  return `/uploads/${path.relative(UPLOAD_DIR, filePath).replace(/\\/g, '/')}`;
+}
+
+function saveSupportMediaFile(file) {
+  if (!file) {
+    return null;
+  }
+
+  const extension =
+    path.extname(file.originalname || '') ||
+    `.${String(file.mimetype || 'application/octet-stream').split('/').pop() || 'bin'}`;
+  const mediaDir = path.join(UPLOAD_DIR, 'support-media');
+  ensureDirectory(mediaDir);
+
+  const filename = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${extension}`;
+  const targetPath = path.join(mediaDir, filename);
+  fs.writeFileSync(targetPath, file.buffer);
+
+  return buildUploadPublicPath(targetPath);
+}
+
 ensureDirectory(UPLOAD_DIR);
 
 app.use(cors({ origin: true, credentials: true }));
@@ -261,14 +283,16 @@ function formatSupportMessage(row) {
     senderType: row.sender_type,
     senderName: row.sender_name,
     text: row.text,
+    mediaType: row.media_type,
+    mediaUrl: row.media_url,
     createdAt: row.created_at,
   };
 }
 
 async function listSupportMessages(conversationId, afterId = 0) {
   const rows = await allAsync(
-    `
-      SELECT id, conversation_id, sender_type, sender_name, text, created_at
+      `
+      SELECT id, conversation_id, sender_type, sender_name, text, media_type, media_url, created_at
       FROM support_messages
       WHERE conversation_id = ? AND id > ?
       ORDER BY id ASC
@@ -428,6 +452,65 @@ function broadcastSupportMessage(conversationId, message) {
   }
 }
 
+async function createSupportReplyMessage({
+  conversationId,
+  text,
+  mediaType = null,
+  mediaUrl = null,
+}) {
+  const conversation = await getAsync(
+    'SELECT * FROM support_conversations WHERE id = ?',
+    [conversationId],
+  );
+
+  if (!conversation) {
+    throw createHttpError(404, 'Conversation not found.');
+  }
+
+  const createdAt = nowIso();
+  const senderName = 'Поддержка';
+  const normalizedText = normalizeText(text, 2000);
+
+  const insertResult = await runAsync(
+    `
+      INSERT INTO support_messages (
+        conversation_id,
+        sender_type,
+        sender_name,
+        text,
+        media_type,
+        media_url,
+        created_at,
+        telegram_delivered
+      ) VALUES (?, 'support', ?, ?, ?, ?, ?, TRUE)
+      RETURNING id
+    `,
+    [conversationId, senderName, normalizedText, mediaType, mediaUrl, createdAt],
+  );
+
+  await runAsync(
+    `
+      UPDATE support_conversations
+      SET last_support_message_at = ?, updated_at = ?
+      WHERE id = ?
+    `,
+    [createdAt, createdAt, conversationId],
+  );
+
+  const message = await getAsync(
+    `
+      SELECT id, conversation_id, sender_type, sender_name, text, media_type, media_url, created_at
+      FROM support_messages
+      WHERE id = ?
+    `,
+    [insertResult.lastID],
+  );
+
+  const payload = formatSupportMessage(message);
+  broadcastSupportMessage(conversationId, payload);
+  return payload;
+}
+
 async function getSupportAdminCount() {
   const row = await getAsync('SELECT COUNT(*) AS count FROM support_admins');
   return Number(row?.count || 0);
@@ -477,6 +560,10 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage });
+const supportMediaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 async function initializeDatabase() {
   await execAsync(`
@@ -534,6 +621,8 @@ async function initializeDatabase() {
       sender_type TEXT NOT NULL,
       sender_name TEXT NOT NULL,
       text TEXT NOT NULL,
+      media_type TEXT,
+      media_url TEXT,
       created_at TIMESTAMPTZ NOT NULL,
       telegram_delivered BOOLEAN DEFAULT FALSE,
       telegram_chat_id TEXT,
@@ -569,6 +658,16 @@ async function initializeDatabase() {
   await execAsync(`
     ALTER TABLE users
     ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE;
+  `);
+
+  await execAsync(`
+    ALTER TABLE support_messages
+    ADD COLUMN IF NOT EXISTS media_type TEXT;
+  `);
+
+  await execAsync(`
+    ALTER TABLE support_messages
+    ADD COLUMN IF NOT EXISTS media_url TEXT;
   `);
 
   const existingAdmin = await getAsync(
@@ -1390,7 +1489,7 @@ app.post(
 
     const message = await getAsync(
       `
-        SELECT id, conversation_id, sender_type, sender_name, text, created_at
+        SELECT id, conversation_id, sender_type, sender_name, text, media_type, media_url, created_at
         FROM support_messages
         WHERE id = ?
       `,
@@ -1730,6 +1829,42 @@ app.post(
 
     const payload = formatSupportMessage(message);
     broadcastSupportMessage(conversationId, payload);
+
+    res.json({ success: true, message: payload });
+  }),
+);
+
+app.post(
+  '/api/internal/support/reply-media',
+  (req, res, next) => {
+    supportMediaUpload.single('media')(req, res, (error) => {
+      if (error) {
+        next(error);
+        return;
+      }
+
+      next();
+    });
+  },
+  asyncRoute(async (req, res) => {
+    const conversationId = toNullableInteger(req.body.conversationId);
+    const caption = normalizeText(req.body.text || req.body.caption, 2000);
+    const mediaFile = req.file;
+
+    if (!conversationId || !mediaFile) {
+      res.status(400).json({
+        success: false,
+        message: 'conversationId and media are required.',
+      });
+      return;
+    }
+
+    const payload = await createSupportReplyMessage({
+      conversationId,
+      text: caption,
+      mediaType: String(mediaFile.mimetype || '').startsWith('image/') ? 'image' : 'file',
+      mediaUrl: saveSupportMediaFile(mediaFile),
+    });
 
     res.json({ success: true, message: payload });
   }),

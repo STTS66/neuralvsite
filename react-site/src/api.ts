@@ -7,6 +7,8 @@ export interface SupportMessage {
   senderType: 'user' | 'support' | 'system';
   senderName: string;
   text: string;
+  mediaType?: string | null;
+  mediaUrl?: string | null;
   createdAt: string;
 }
 

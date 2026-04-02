@@ -233,6 +233,7 @@ const SupportWidget: React.FC<SupportWidgetProps> = ({ isOpen, onClose }) => {
               ) : (
                 messages.map((message) => {
                   const isUserMessage = message.senderType === 'user';
+                  const senderLabel = isUserMessage ? 'Вы' : 'Поддержка';
 
                   return (
                     <article
@@ -240,10 +241,18 @@ const SupportWidget: React.FC<SupportWidgetProps> = ({ isOpen, onClose }) => {
                       className={`support-message ${isUserMessage ? 'outgoing' : 'incoming'}`}
                     >
                       <div className="support-message-meta">
-                        <span>{isUserMessage ? 'Вы' : message.senderName || 'Поддержка'}</span>
+                        <span>{senderLabel}</span>
                         <time>{formatMessageTime(message.createdAt)}</time>
                       </div>
-                      <p>{message.text}</p>
+                      {message.mediaType === 'image' && message.mediaUrl ? (
+                        <img
+                          src={message.mediaUrl}
+                          alt="Вложение поддержки"
+                          className="support-message-image"
+                          loading="lazy"
+                        />
+                      ) : null}
+                      {message.text ? <p>{message.text}</p> : null}
                     </article>
                   );
                 })
