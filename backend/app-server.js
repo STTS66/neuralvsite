@@ -43,6 +43,23 @@ const DATABASE_URL =
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
 const ORDER_UPLOAD_MAX_SIZE = 64 * 1024 * 1024;
 const ORDER_ALLOWED_LINK_PROTOCOLS = new Set(['http:', 'https:']);
+const LOGIN_GUARD_WINDOW_MS = 30 * 60 * 1000;
+const LOGIN_GUARD_MAX_ATTEMPTS = 7;
+const LOGIN_GUARD_BLOCK_MS = 60 * 60 * 1000;
+const REGISTER_REQUEST_GUARD_WINDOW_MS = 30 * 60 * 1000;
+const REGISTER_REQUEST_GUARD_MAX_ATTEMPTS = 3;
+const REGISTER_REQUEST_GUARD_BLOCK_MS = 60 * 60 * 1000;
+const REGISTER_VERIFY_GUARD_WINDOW_MS = 30 * 60 * 1000;
+const REGISTER_VERIFY_GUARD_MAX_ATTEMPTS = 5;
+const REGISTER_VERIFY_GUARD_BLOCK_MS = 60 * 60 * 1000;
+const ORDER_BURST_GUARD_WINDOW_MS = 3 * 60 * 1000;
+const ORDER_BURST_GUARD_MAX_ATTEMPTS = 3;
+const ORDER_BURST_GUARD_BLOCK_MS = 15 * 60 * 1000;
+const ORDER_HOURLY_GUARD_WINDOW_MS = 60 * 60 * 1000;
+const ORDER_HOURLY_GUARD_MAX_ATTEMPTS = 6;
+const ORDER_HOURLY_GUARD_BLOCK_MS = 4 * 60 * 60 * 1000;
+const MAX_PENDING_ORDERS_PER_USER = 3;
+const DUPLICATE_ORDER_LINK_WINDOW_MS = 12 * 60 * 60 * 1000;
 
 function ensureDirectory(targetPath) {
   if (!fs.existsSync(targetPath)) {
@@ -270,6 +287,157 @@ function buildBanMessage(user) {
   }
 
   return `Аккаунт временно заблокирован до ${banInfo.bannedUntilLabel}. Причина: ${banInfo.reason}`;
+}
+
+function normalizeGuardScopeKey(value, maxLength = 160) {
+  return normalizeText(String(value ?? ''), maxLength).toLowerCase();
+}
+
+function getClientIp(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '')
+    .split(',')[0]
+    .trim();
+  const fallback = req.ip || req.socket?.remoteAddress || '';
+  return normalizeGuardScopeKey(forwarded || fallback || 'unknown', 160) || 'unknown';
+}
+
+function formatProtectionUntilLabel(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return date.toLocaleString('ru-RU');
+}
+
+function buildProtectionPauseMessage(baseMessage, blockedUntil, reason) {
+  const untilLabel = formatProtectionUntilLabel(blockedUntil);
+  const suffix = untilLabel ? ` Повторите после ${untilLabel}.` : ' Повторите позже.';
+  const reasonPart = reason ? ` Причина: ${reason}.` : '';
+  return `${baseMessage}${suffix}${reasonPart}`;
+}
+
+async function getRequestGuard(action, scopeType, scopeKey) {
+  return getAsync(
+    `
+      SELECT *
+      FROM request_guards
+      WHERE action = ? AND scope_type = ? AND scope_key = ?
+    `,
+    [action, scopeType, scopeKey],
+  );
+}
+
+function buildGuardBlockPayload(baseMessage, row) {
+  return {
+    blockedUntil: row?.blocked_until || null,
+    reason: normalizeText(row?.reason, 240) || null,
+    message: buildProtectionPauseMessage(
+      baseMessage,
+      row?.blocked_until,
+      normalizeText(row?.reason, 240),
+    ),
+  };
+}
+
+async function findActiveRequestGuard(action, scopes, baseMessage) {
+  for (const scope of scopes) {
+    if (!scope?.scopeKey) {
+      continue;
+    }
+
+    const row = await getRequestGuard(action, scope.scopeType, scope.scopeKey);
+    const blockedUntil = new Date(row?.blocked_until || '').getTime();
+    if (!Number.isNaN(blockedUntil) && blockedUntil > Date.now()) {
+      return buildGuardBlockPayload(baseMessage, row);
+    }
+  }
+
+  return null;
+}
+
+async function consumeRequestGuard(action, scopes, options) {
+  let triggeredBlock = null;
+  const timestamp = nowIso();
+  const now = Date.now();
+
+  for (const scope of scopes) {
+    if (!scope?.scopeKey) {
+      continue;
+    }
+
+    const row = await getRequestGuard(action, scope.scopeType, scope.scopeKey);
+    const windowStartedAt = new Date(row?.window_started_at || '').getTime();
+    const isSameWindow =
+      !Number.isNaN(windowStartedAt) && now - windowStartedAt < options.windowMs;
+    const attemptCount = isSameWindow ? Number(row?.attempt_count || 0) + 1 : 1;
+    const nextWindowStartedAt = isSameWindow ? row.window_started_at : timestamp;
+    const blockedUntil =
+      attemptCount >= options.maxAttempts
+        ? new Date(now + options.blockMs).toISOString()
+        : null;
+
+    await runAsync(
+      `
+        INSERT INTO request_guards (
+          action,
+          scope_type,
+          scope_key,
+          attempt_count,
+          window_started_at,
+          blocked_until,
+          reason,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (action, scope_type, scope_key) DO UPDATE SET
+          attempt_count = excluded.attempt_count,
+          window_started_at = excluded.window_started_at,
+          blocked_until = excluded.blocked_until,
+          reason = excluded.reason,
+          updated_at = excluded.updated_at
+      `,
+      [
+        action,
+        scope.scopeType,
+        scope.scopeKey,
+        attemptCount,
+        nextWindowStartedAt,
+        blockedUntil,
+        blockedUntil ? options.reason : null,
+        row?.created_at || timestamp,
+        timestamp,
+      ],
+    );
+
+    if (blockedUntil && !triggeredBlock) {
+      triggeredBlock = {
+        blockedUntil,
+        reason: options.reason,
+        message: buildProtectionPauseMessage(
+          options.message,
+          blockedUntil,
+          options.reason,
+        ),
+      };
+    }
+  }
+
+  return triggeredBlock;
+}
+
+async function clearRequestGuards(action, scopes) {
+  for (const scope of scopes) {
+    if (!scope?.scopeKey) {
+      continue;
+    }
+
+    await runAsync(
+      'DELETE FROM request_guards WHERE action = ? AND scope_type = ? AND scope_key = ?',
+      [action, scope.scopeType, scope.scopeKey],
+    );
+  }
 }
 
 function removeFileIfExists(filePath) {
@@ -760,6 +928,20 @@ async function initializeDatabase() {
       updated_at TIMESTAMPTZ NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS request_guards (
+      id SERIAL PRIMARY KEY,
+      action TEXT NOT NULL,
+      scope_type TEXT NOT NULL,
+      scope_key TEXT NOT NULL,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      window_started_at TIMESTAMPTZ NOT NULL,
+      blocked_until TIMESTAMPTZ,
+      reason TEXT,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      UNIQUE(action, scope_type, scope_key)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
     CREATE INDEX IF NOT EXISTS idx_email_verification_requests_expires_at ON email_verification_requests(expires_at);
     CREATE INDEX IF NOT EXISTS idx_email_verification_requests_username ON email_verification_requests(username);
@@ -767,6 +949,7 @@ async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_support_messages_conversation_id ON support_messages(conversation_id, id);
     CREATE INDEX IF NOT EXISTS idx_support_messages_outbox ON support_messages(telegram_delivered, sender_type, id);
     CREATE INDEX IF NOT EXISTS idx_support_messages_telegram_lookup ON support_messages(telegram_chat_id, telegram_message_id);
+    CREATE INDEX IF NOT EXISTS idx_request_guards_blocked_until ON request_guards(action, blocked_until);
   `);
 
   await execAsync(`
@@ -869,6 +1052,11 @@ app.post(
     const username = normalizeText(req.body.username, 80);
     const email = normalizeEmail(req.body.email);
     const password = typeof req.body.password === 'string' ? req.body.password : '';
+    const registerScopes = [
+      { scopeType: 'ip', scopeKey: getClientIp(req) },
+      { scopeType: 'email', scopeKey: normalizeGuardScopeKey(email, 160) },
+      { scopeType: 'username', scopeKey: normalizeGuardScopeKey(username, 80) },
+    ];
 
     if (!username || !email || !password) {
       res.status(400).json({ success: false, message: 'All fields are required.' });
@@ -877,6 +1065,38 @@ app.post(
 
     if (!isValidEmail(email)) {
       res.status(400).json({ success: false, message: 'Enter a valid email address.' });
+      return;
+    }
+
+    const activeRegisterGuard = await findActiveRequestGuard(
+      'register-request',
+      registerScopes,
+      'Слишком много запросов кода подтверждения.',
+    );
+    if (activeRegisterGuard) {
+      res.status(429).json({
+        success: false,
+        message: activeRegisterGuard.message,
+        blockedUntil: activeRegisterGuard.blockedUntil,
+        reason: activeRegisterGuard.reason,
+      });
+      return;
+    }
+
+    const registerGuard = await consumeRequestGuard('register-request', registerScopes, {
+      windowMs: REGISTER_REQUEST_GUARD_WINDOW_MS,
+      maxAttempts: REGISTER_REQUEST_GUARD_MAX_ATTEMPTS,
+      blockMs: REGISTER_REQUEST_GUARD_BLOCK_MS,
+      message: 'Слишком много запросов кода подтверждения.',
+      reason: 'слишком частые запросы кода подтверждения',
+    });
+    if (registerGuard) {
+      res.status(429).json({
+        success: false,
+        message: registerGuard.message,
+        blockedUntil: registerGuard.blockedUntil,
+        reason: registerGuard.reason,
+      });
       return;
     }
 
@@ -1005,11 +1225,30 @@ app.post(
   asyncRoute(async (req, res) => {
     const email = normalizeEmail(req.body.email);
     const code = normalizeText(req.body.code, 12).replace(/\s+/g, '');
+    const verifyScopes = [
+      { scopeType: 'ip', scopeKey: getClientIp(req) },
+      { scopeType: 'email', scopeKey: normalizeGuardScopeKey(email, 160) },
+    ];
 
     if (!email || !code) {
       res.status(400).json({
         success: false,
         message: 'Email and verification code are required.',
+      });
+      return;
+    }
+
+    const activeVerifyGuard = await findActiveRequestGuard(
+      'register-verify',
+      verifyScopes,
+      'Слишком много неверных попыток подтверждения.',
+    );
+    if (activeVerifyGuard) {
+      res.status(429).json({
+        success: false,
+        message: activeVerifyGuard.message,
+        blockedUntil: activeVerifyGuard.blockedUntil,
+        reason: activeVerifyGuard.reason,
       });
       return;
     }
@@ -1046,6 +1285,24 @@ app.post(
         `,
         [nowIso(), email],
       );
+
+      const verifyGuard = await consumeRequestGuard('register-verify', verifyScopes, {
+        windowMs: REGISTER_VERIFY_GUARD_WINDOW_MS,
+        maxAttempts: REGISTER_VERIFY_GUARD_MAX_ATTEMPTS,
+        blockMs: REGISTER_VERIFY_GUARD_BLOCK_MS,
+        message: 'Слишком много неверных попыток подтверждения.',
+        reason: 'слишком много неверных кодов подтверждения',
+      });
+      if (verifyGuard) {
+        res.status(429).json({
+          success: false,
+          message: verifyGuard.message,
+          blockedUntil: verifyGuard.blockedUntil,
+          reason: verifyGuard.reason,
+        });
+        return;
+      }
+
       res.status(400).json({
         success: false,
         message: 'Incorrect verification code.',
@@ -1054,6 +1311,8 @@ app.post(
     }
 
     try {
+      await clearRequestGuards('register-verify', verifyScopes);
+
       const accountId = await generateUserAccountId();
       const result = await runAsync(
         `
@@ -1091,6 +1350,33 @@ app.post(
   asyncRoute(async (req, res) => {
     const login = normalizeText(req.body.login, 160);
     const password = typeof req.body.password === 'string' ? req.body.password : '';
+    const loginScopes = [
+      { scopeType: 'ip', scopeKey: getClientIp(req) },
+      { scopeType: 'login', scopeKey: normalizeGuardScopeKey(login, 160) },
+    ];
+
+    if (!login || !password) {
+      res.status(400).json({
+        success: false,
+        message: 'Введите логин и пароль.',
+      });
+      return;
+    }
+
+    const activeLoginGuard = await findActiveRequestGuard(
+      'login',
+      loginScopes,
+      'Слишком много попыток входа.',
+    );
+    if (activeLoginGuard) {
+      res.status(429).json({
+        success: false,
+        message: activeLoginGuard.message,
+        blockedUntil: activeLoginGuard.blockedUntil,
+        reason: activeLoginGuard.reason,
+      });
+      return;
+    }
 
     const user = await getAsync(
       `
@@ -1102,12 +1388,46 @@ app.post(
     );
 
     if (!user) {
+      const loginGuard = await consumeRequestGuard('login', loginScopes, {
+        windowMs: LOGIN_GUARD_WINDOW_MS,
+        maxAttempts: LOGIN_GUARD_MAX_ATTEMPTS,
+        blockMs: LOGIN_GUARD_BLOCK_MS,
+        message: 'Слишком много попыток входа.',
+        reason: 'подозрительно частые ошибки авторизации',
+      });
+      if (loginGuard) {
+        res.status(429).json({
+          success: false,
+          message: loginGuard.message,
+          blockedUntil: loginGuard.blockedUntil,
+          reason: loginGuard.reason,
+        });
+        return;
+      }
+
       res.json({ success: false, message: 'Неверный логин или пароль.' });
       return;
     }
 
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
+      const loginGuard = await consumeRequestGuard('login', loginScopes, {
+        windowMs: LOGIN_GUARD_WINDOW_MS,
+        maxAttempts: LOGIN_GUARD_MAX_ATTEMPTS,
+        blockMs: LOGIN_GUARD_BLOCK_MS,
+        message: 'Слишком много попыток входа.',
+        reason: 'подозрительно частые ошибки авторизации',
+      });
+      if (loginGuard) {
+        res.status(429).json({
+          success: false,
+          message: loginGuard.message,
+          blockedUntil: loginGuard.blockedUntil,
+          reason: loginGuard.reason,
+        });
+        return;
+      }
+
       res.json({ success: false, message: 'Неверный логин или пароль.' });
       return;
     }
@@ -1122,6 +1442,8 @@ app.post(
       });
       return;
     }
+
+    await clearRequestGuards('login', loginScopes);
 
     res.json({
       success: true,
@@ -1222,6 +1544,10 @@ app.post(
     const link = normalizeText(req.body.link, 2000);
     const userId = toNullableInteger(req.body.user_id);
     const filePath = req.file ? req.file.path : null;
+    const orderScopes = [
+      { scopeType: 'ip', scopeKey: getClientIp(req) },
+      { scopeType: 'user', scopeKey: normalizeGuardScopeKey(userId, 40) },
+    ];
 
     if (!userId || userId <= 0) {
       removeFileIfExists(filePath);
@@ -1250,6 +1576,8 @@ app.post(
       });
       return;
     }
+
+    const duplicateSince = new Date(Date.now() - DUPLICATE_ORDER_LINK_WINDOW_MS).toISOString();
 
     const user = await getAsync(
       `
@@ -1282,6 +1610,115 @@ app.post(
         message: buildBanMessage(user),
         bannedUntil: banInfo.bannedUntilIso,
         banReason: banInfo.reason,
+      });
+      return;
+    }
+
+    const activeBurstGuard = await findActiveRequestGuard(
+      'order-burst',
+      orderScopes,
+      'Слишком много заявок за короткое время.',
+    );
+    if (activeBurstGuard) {
+      removeFileIfExists(filePath);
+      res.status(429).json({
+        success: false,
+        message: activeBurstGuard.message,
+        blockedUntil: activeBurstGuard.blockedUntil,
+        reason: activeBurstGuard.reason,
+      });
+      return;
+    }
+
+    const activeHourlyGuard = await findActiveRequestGuard(
+      'order-hourly',
+      orderScopes,
+      'Слишком много заявок на проверку.',
+    );
+    if (activeHourlyGuard) {
+      removeFileIfExists(filePath);
+      res.status(429).json({
+        success: false,
+        message: activeHourlyGuard.message,
+        blockedUntil: activeHourlyGuard.blockedUntil,
+        reason: activeHourlyGuard.reason,
+      });
+      return;
+    }
+
+    const pendingOrders = await getAsync(
+      `
+        SELECT COUNT(*)::int AS count
+        FROM orders
+        WHERE user_id = ? AND status = 'pending'
+      `,
+      [userId],
+    );
+
+    if (Number(pendingOrders?.count || 0) >= MAX_PENDING_ORDERS_PER_USER) {
+      removeFileIfExists(filePath);
+      res.status(429).json({
+        success: false,
+        message: 'У вас уже есть несколько заявок на проверке. Дождитесь ответа по текущим заявкам.',
+      });
+      return;
+    }
+
+    if (link) {
+      const duplicateLinkOrder = await getAsync(
+        `
+          SELECT id
+          FROM orders
+          WHERE user_id = ?
+            AND LOWER(COALESCE(link, '')) = LOWER(?)
+            AND created_at >= ?
+          LIMIT 1
+        `,
+        [userId, link, duplicateSince],
+      );
+
+      if (duplicateLinkOrder) {
+        removeFileIfExists(filePath);
+        res.status(409).json({
+          success: false,
+          message: 'Эта ссылка уже отправлялась на проверку недавно. Дождитесь результата текущей заявки.',
+        });
+        return;
+      }
+    }
+
+    const orderBurstGuard = await consumeRequestGuard('order-burst', orderScopes, {
+      windowMs: ORDER_BURST_GUARD_WINDOW_MS,
+      maxAttempts: ORDER_BURST_GUARD_MAX_ATTEMPTS,
+      blockMs: ORDER_BURST_GUARD_BLOCK_MS,
+      message: 'Слишком много заявок за короткое время.',
+      reason: 'слишком частая отправка заявок',
+    });
+    if (orderBurstGuard) {
+      removeFileIfExists(filePath);
+      res.status(429).json({
+        success: false,
+        message: orderBurstGuard.message,
+        blockedUntil: orderBurstGuard.blockedUntil,
+        reason: orderBurstGuard.reason,
+      });
+      return;
+    }
+
+    const orderHourlyGuard = await consumeRequestGuard('order-hourly', orderScopes, {
+      windowMs: ORDER_HOURLY_GUARD_WINDOW_MS,
+      maxAttempts: ORDER_HOURLY_GUARD_MAX_ATTEMPTS,
+      blockMs: ORDER_HOURLY_GUARD_BLOCK_MS,
+      message: 'Слишком много заявок на проверку.',
+      reason: 'подозрительно много заявок за час',
+    });
+    if (orderHourlyGuard) {
+      removeFileIfExists(filePath);
+      res.status(429).json({
+        success: false,
+        message: orderHourlyGuard.message,
+        blockedUntil: orderHourlyGuard.blockedUntil,
+        reason: orderHourlyGuard.reason,
       });
       return;
     }
