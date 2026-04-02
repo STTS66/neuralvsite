@@ -3,6 +3,7 @@ const { Pool } = require('pg');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const multer = require('multer');
+const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -21,6 +22,17 @@ const VT_API_KEY = process.env.VT_API_KEY || '';
 const SUPPORT_INTERNAL_TOKEN = process.env.SUPPORT_INTERNAL_TOKEN || 'change-me';
 const SUPPORT_MESSAGE_COOLDOWN_MS = Number(
   process.env.SUPPORT_MESSAGE_COOLDOWN_MS || 5000,
+);
+const REGISTRATION_CODE_TTL_MINUTES = Number(
+  process.env.REGISTRATION_CODE_TTL_MINUTES || 15,
+);
+const SMTP_HOST = (process.env.SMTP_HOST || '').trim();
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_USER = (process.env.SMTP_USER || '').trim();
+const SMTP_PASS = process.env.SMTP_PASS || '';
+const SMTP_FROM = (process.env.SMTP_FROM || SMTP_USER || '').trim();
+const SMTP_SECURE = ['1', 'true', 'yes'].includes(
+  String(process.env.SMTP_SECURE || '').trim().toLowerCase(),
 );
 const SUPPORT_ADMIN_TELEGRAM_IDS = (process.env.SUPPORT_ADMIN_TELEGRAM_IDS || '')
   .split(',')
@@ -53,6 +65,20 @@ app.use((req, _res, next) => {
 const pool = new Pool({
   connectionString: DATABASE_URL,
 });
+
+const mailTransport = SMTP_HOST
+  ? nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_SECURE,
+      auth: SMTP_USER
+        ? {
+            user: SMTP_USER,
+            pass: SMTP_PASS,
+          }
+        : undefined,
+    })
+  : null;
 
 pool.on('error', (error) => {
   console.error('Unexpected PostgreSQL error:', error);
@@ -114,6 +140,57 @@ function normalizeText(value, maxLength = 2000) {
   }
 
   return value.replace(/\r\n/g, '\n').trim().slice(0, maxLength);
+}
+
+function normalizeEmail(value) {
+  return normalizeText(value, 160).toLowerCase();
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function generateVerificationCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function hashVerificationCode(code) {
+  return crypto.createHash('sha256').update(String(code)).digest('hex');
+}
+
+async function sendRegistrationCodeEmail({ email, username, code }) {
+  if (!mailTransport || !SMTP_FROM) {
+    throw createHttpError(
+      503,
+      'Email verification is not configured on the server.',
+    );
+  }
+
+  await mailTransport.sendMail({
+    from: SMTP_FROM,
+    to: email,
+    subject: 'NeuralV verification code',
+    text: [
+      `Hello, ${username}!`,
+      '',
+      `Your NeuralV verification code: ${code}`,
+      `The code is valid for ${REGISTRATION_CODE_TTL_MINUTES} minutes.`,
+      '',
+      'If you did not request registration, just ignore this email.',
+    ].join('\n'),
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#111827">
+        <h2 style="margin:0 0 16px">NeuralV verification</h2>
+        <p style="margin:0 0 16px">Hello, <strong>${username}</strong>.</p>
+        <p style="margin:0 0 12px">Use this code to complete your registration:</p>
+        <div style="margin:0 0 16px;padding:16px 20px;background:#f3f4f6;border-radius:12px;font-size:32px;font-weight:700;letter-spacing:6px;text-align:center">
+          ${code}
+        </div>
+        <p style="margin:0 0 8px">The code is valid for ${REGISTRATION_CODE_TTL_MINUTES} minutes.</p>
+        <p style="margin:0;color:#6b7280">If you did not request registration, just ignore this email.</p>
+      </div>
+    `,
+  });
 }
 
 function toNullableInteger(value) {
@@ -300,6 +377,18 @@ async function getOrCreateSupportConversation({ clientId, userId, displayName })
   return conversation;
 }
 
+async function getRegisteredSupportUser(userId) {
+  const normalizedUserId = toNullableInteger(userId);
+  if (!normalizedUserId) {
+    return null;
+  }
+
+  return getAsync(
+    'SELECT id, username, email, role, display_name FROM users WHERE id = ?',
+    [normalizedUserId],
+  );
+}
+
 const supportStreams = new Map();
 
 function sendSseEvent(response, event, data) {
@@ -397,8 +486,21 @@ async function initializeDatabase() {
       email TEXT UNIQUE,
       password TEXT,
       role TEXT DEFAULT 'user',
+      email_verified BOOLEAN NOT NULL DEFAULT TRUE,
       display_name TEXT,
       avatar TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS email_verification_requests (
+      id SERIAL PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      username TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS orders (
@@ -456,10 +558,17 @@ async function initializeDatabase() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
+    CREATE INDEX IF NOT EXISTS idx_email_verification_requests_expires_at ON email_verification_requests(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_email_verification_requests_username ON email_verification_requests(username);
     CREATE INDEX IF NOT EXISTS idx_support_conversations_client_id ON support_conversations(client_id);
     CREATE INDEX IF NOT EXISTS idx_support_messages_conversation_id ON support_messages(conversation_id, id);
     CREATE INDEX IF NOT EXISTS idx_support_messages_outbox ON support_messages(telegram_delivered, sender_type, id);
     CREATE INDEX IF NOT EXISTS idx_support_messages_telegram_lookup ON support_messages(telegram_chat_id, telegram_message_id);
+  `);
+
+  await execAsync(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE;
   `);
 
   const existingAdmin = await getAsync(
@@ -501,8 +610,105 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.post(
+  '/api/register/request-code',
+  asyncRoute(async (req, res) => {
+    const username = normalizeText(req.body.username, 80);
+    const email = normalizeEmail(req.body.email);
+    const password = typeof req.body.password === 'string' ? req.body.password : '';
+
+    if (!username || !email || !password) {
+      res.status(400).json({ success: false, message: 'All fields are required.' });
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      res.status(400).json({ success: false, message: 'Enter a valid email address.' });
+      return;
+    }
+
+    const existingUser = await getAsync(
+      'SELECT id FROM users WHERE username = ? OR email = ? LIMIT 1',
+      [username, email],
+    );
+
+    if (existingUser) {
+      res.json({
+        success: false,
+        message: 'A user with this username or email already exists.',
+      });
+      return;
+    }
+
+    const pendingConflict = await getAsync(
+      `
+        SELECT id
+        FROM email_verification_requests
+        WHERE username = ? AND email <> ?
+        LIMIT 1
+      `,
+      [username, email],
+    );
+
+    if (pendingConflict) {
+      res.json({
+        success: false,
+        message: 'This username is already waiting for verification with another email.',
+      });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const code = generateVerificationCode();
+    const codeHash = hashVerificationCode(code);
+    const createdAt = nowIso();
+    const expiresAt = new Date(
+      Date.now() + REGISTRATION_CODE_TTL_MINUTES * 60 * 1000,
+    ).toISOString();
+
+    await runAsync(
+      `
+        INSERT INTO email_verification_requests (
+          email,
+          username,
+          password_hash,
+          code_hash,
+          attempt_count,
+          expires_at,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, 0, ?, ?, ?)
+        ON CONFLICT (email) DO UPDATE SET
+          username = excluded.username,
+          password_hash = excluded.password_hash,
+          code_hash = excluded.code_hash,
+          attempt_count = 0,
+          expires_at = excluded.expires_at,
+          updated_at = excluded.updated_at
+      `,
+      [email, username, passwordHash, codeHash, expiresAt, createdAt, createdAt],
+    );
+
+    await sendRegistrationCodeEmail({ email, username, code });
+
+    res.json({
+      success: true,
+      message: 'Verification code sent to your email.',
+      email,
+      expiresInMinutes: REGISTRATION_CODE_TTL_MINUTES,
+    });
+  }),
+);
+
+app.post(
   '/api/register',
   asyncRoute(async (req, res) => {
+    res.status(410).json({
+      success: false,
+      message: 'Use /api/register/request-code and /api/register/verify instead.',
+    });
+    return;
+
     const username = normalizeText(req.body.username, 80);
     const email = normalizeText(req.body.email, 160);
     const password = typeof req.body.password === 'string' ? req.body.password : '';
@@ -531,6 +737,91 @@ app.post(
         res.json({
           success: false,
           message: 'Пользователь с таким именем или email уже существует.',
+        });
+        return;
+      }
+
+      throw error;
+    }
+  }),
+);
+
+app.post(
+  '/api/register/verify',
+  asyncRoute(async (req, res) => {
+    const email = normalizeEmail(req.body.email);
+    const code = normalizeText(req.body.code, 12).replace(/\s+/g, '');
+
+    if (!email || !code) {
+      res.status(400).json({
+        success: false,
+        message: 'Email and verification code are required.',
+      });
+      return;
+    }
+
+    const request = await getAsync(
+      'SELECT * FROM email_verification_requests WHERE email = ?',
+      [email],
+    );
+
+    if (!request) {
+      res.status(404).json({
+        success: false,
+        message: 'First request a verification code.',
+      });
+      return;
+    }
+
+    if (new Date(request.expires_at).getTime() < Date.now()) {
+      await runAsync('DELETE FROM email_verification_requests WHERE email = ?', [email]);
+      res.status(410).json({
+        success: false,
+        message: 'The verification code has expired. Request a new one.',
+      });
+      return;
+    }
+
+    if (request.code_hash !== hashVerificationCode(code)) {
+      await runAsync(
+        `
+          UPDATE email_verification_requests
+          SET attempt_count = attempt_count + 1,
+              updated_at = ?
+          WHERE email = ?
+        `,
+        [nowIso(), email],
+      );
+      res.status(400).json({
+        success: false,
+        message: 'Incorrect verification code.',
+      });
+      return;
+    }
+
+    try {
+      const result = await runAsync(
+        `
+          INSERT INTO users (username, email, password, role, email_verified)
+          VALUES (?, ?, ?, 'user', TRUE)
+          RETURNING id
+        `,
+        [request.username, email, request.password_hash],
+      );
+
+      await runAsync('DELETE FROM email_verification_requests WHERE email = ?', [email]);
+
+      const user = await getAsync(
+        'SELECT id, username, role FROM users WHERE id = ?',
+        [result.lastID],
+      );
+
+      res.json({ success: true, user });
+    } catch (error) {
+      if (error.code === '23505' || error.message.includes('duplicate key')) {
+        res.json({
+          success: false,
+          message: 'A user with this username or email already exists.',
         });
         return;
       }
@@ -927,10 +1218,19 @@ app.post(
       return;
     }
 
+    const supportUser = await getRegisteredSupportUser(req.body.userId);
+    if (!supportUser) {
+      res.status(403).json({
+        success: false,
+        message: 'Support is available only to registered users.',
+      });
+      return;
+    }
+
     const conversation = await getOrCreateSupportConversation({
       clientId,
-      userId: req.body.userId,
-      displayName: req.body.displayName,
+      userId: supportUser.id,
+      displayName: supportUser.display_name || supportUser.username,
     });
 
     const messages = await listSupportMessages(conversation.id);
@@ -954,10 +1254,19 @@ app.get(
   asyncRoute(async (req, res) => {
     const conversationId = toNullableInteger(req.params.id);
     const clientId = normalizeText(req.query.clientId, 120);
+    const supportUser = await getRegisteredSupportUser(req.query.userId);
     const afterId = toNullableInteger(req.query.afterId) || 0;
 
+    if (!supportUser) {
+      res.status(403).json({
+        success: false,
+        message: 'Support is available only to registered users.',
+      });
+      return;
+    }
+
     const conversation = await getSupportConversationByClient(conversationId, clientId);
-    if (!conversation) {
+    if (!conversation || Number(conversation.user_id) !== supportUser.id) {
       res.status(404).json({ success: false, message: 'Conversation not found.' });
       return;
     }
@@ -976,9 +1285,18 @@ app.get(
   asyncRoute(async (req, res) => {
     const conversationId = toNullableInteger(req.params.id);
     const clientId = normalizeText(req.query.clientId, 120);
+    const supportUser = await getRegisteredSupportUser(req.query.userId);
+
+    if (!supportUser) {
+      res.status(403).json({
+        success: false,
+        message: 'Support is available only to registered users.',
+      });
+      return;
+    }
 
     const conversation = await getSupportConversationByClient(conversationId, clientId);
-    if (!conversation) {
+    if (!conversation || Number(conversation.user_id) !== supportUser.id) {
       res.status(404).json({ success: false, message: 'Conversation not found.' });
       return;
     }
@@ -998,6 +1316,7 @@ app.post(
     const conversationId = toNullableInteger(req.body.conversationId);
     const clientId = normalizeText(req.body.clientId, 120);
     const text = normalizeText(req.body.text, 2000);
+    const supportUser = await getRegisteredSupportUser(req.body.userId);
 
     if (!conversationId || !clientId || !text) {
       res.status(400).json({
@@ -1007,8 +1326,16 @@ app.post(
       return;
     }
 
+    if (!supportUser) {
+      res.status(403).json({
+        success: false,
+        message: 'Support is available only to registered users.',
+      });
+      return;
+    }
+
     const conversation = await getSupportConversationByClient(conversationId, clientId);
-    if (!conversation) {
+    if (!conversation || Number(conversation.user_id) !== supportUser.id) {
       res.status(404).json({ success: false, message: 'Conversation not found.' });
       return;
     }
@@ -1025,8 +1352,8 @@ app.post(
 
     const createdAt = nowIso();
     const senderName = buildSupportDisplayName(
-      req.body.displayName,
-      req.body.userId,
+      supportUser.display_name || supportUser.username,
+      supportUser.id,
       clientId,
       conversation.display_name,
     );
@@ -1054,7 +1381,7 @@ app.post(
       `,
       [
         senderName,
-        toNullableInteger(req.body.userId) ?? conversation.user_id,
+        supportUser.id,
         createdAt,
         createdAt,
         conversationId,

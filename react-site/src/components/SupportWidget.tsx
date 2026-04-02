@@ -56,12 +56,13 @@ const SupportWidget: React.FC<SupportWidgetProps> = ({ isOpen, onClose }) => {
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [tick, setTick] = useState(Date.now());
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
   const clientId = useMemo(() => getSupportClientId(), []);
-  const userId = localStorage.getItem('neuralv_id');
-  const displayName = localStorage.getItem('neuralv_username') || 'Гость';
+  const userId = localStorage.getItem('neuralv_id') || '';
+  const displayName = localStorage.getItem('neuralv_username') || 'Пользователь';
 
   useEffect(() => {
-    if (!isOpen) {
+    if (!isOpen || !userId) {
       return;
     }
 
@@ -112,11 +113,11 @@ const SupportWidget: React.FC<SupportWidgetProps> = ({ isOpen, onClose }) => {
   }, [cooldownUntil, isOpen]);
 
   useEffect(() => {
-    if (!isOpen || !conversation) {
+    if (!isOpen || !conversation || !userId) {
       return;
     }
 
-    const stream = new EventSource(API.buildSupportStreamUrl(conversation.id, clientId));
+    const stream = new EventSource(API.buildSupportStreamUrl(conversation.id, clientId, userId));
 
     stream.addEventListener('message', (event) => {
       const payload = JSON.parse(event.data) as SupportMessage;
@@ -128,7 +129,7 @@ const SupportWidget: React.FC<SupportWidgetProps> = ({ isOpen, onClose }) => {
     };
 
     return () => stream.close();
-  }, [clientId, conversation, isOpen]);
+  }, [clientId, conversation, isOpen, userId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -138,7 +139,7 @@ const SupportWidget: React.FC<SupportWidgetProps> = ({ isOpen, onClose }) => {
   const isCooldown = cooldownLeft > 0;
 
   const handleSend = async () => {
-    if (!conversation || !draft.trim() || isCooldown || isLoading) {
+    if (!conversation || !userId || !draft.trim() || isCooldown || isLoading) {
       return;
     }
 
@@ -176,6 +177,10 @@ const SupportWidget: React.FC<SupportWidgetProps> = ({ isOpen, onClose }) => {
     }
   };
 
+  if (!userId) {
+    return null;
+  }
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -201,7 +206,7 @@ const SupportWidget: React.FC<SupportWidgetProps> = ({ isOpen, onClose }) => {
                 </div>
                 <div>
                   <h3>Поддержка</h3>
-                  <p>{conversation?.publicId ? `Диалог ${conversation.publicId}` : 'Прямо на сайте'}</p>
+                  <p>{conversation?.publicId ? `Диалог ${conversation.publicId}` : 'Чат прямо на сайте'}</p>
                 </div>
               </div>
               <button type="button" className="support-close" onClick={onClose} aria-label="Закрыть">
@@ -210,7 +215,7 @@ const SupportWidget: React.FC<SupportWidgetProps> = ({ isOpen, onClose }) => {
             </header>
 
             <div className="support-status-bar">
-              <span>Мы ответим сюда же, без перехода в Telegram.</span>
+              <span>Ответ поддержки придёт сюда же, без перехода в Telegram.</span>
               {isCooldown && <strong>Пауза {cooldownLeft} сек</strong>}
             </div>
 

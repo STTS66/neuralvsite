@@ -6,7 +6,8 @@
 2. Fill in `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
 3. Fill in `TELEGRAM_BOT_TOKEN`
 4. Fill in `SUPPORT_INTERNAL_TOKEN` with a long random string
-5. Change `DEFAULT_ADMIN_PASSWORD`
+5. Fill in `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
+6. Change `DEFAULT_ADMIN_PASSWORD`
 
 ## 2. Build and start
 

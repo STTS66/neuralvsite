@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
@@ -12,11 +12,25 @@ import Admin from './pages/Admin';
 
 function App() {
   const [isSupportOpen, setIsSupportOpen] = useState(false);
+  const isAuthenticated = Boolean(localStorage.getItem('neuralv_id'));
+
+  useEffect(() => {
+    if (!isAuthenticated && isSupportOpen) {
+      setIsSupportOpen(false);
+    }
+  }, [isAuthenticated, isSupportOpen]);
 
   return (
     <div className="page-container">
       <Starfield />
-      <Navbar onSupportOpen={() => setIsSupportOpen(true)} />
+      <Navbar
+        canUseSupport={isAuthenticated}
+        onSupportOpen={() => {
+          if (isAuthenticated) {
+            setIsSupportOpen(true);
+          }
+        }}
+      />
       <main className="main-content">
         <Routes>
           <Route path="/" element={<Home />} />
@@ -27,7 +41,9 @@ function App() {
         </Routes>
       </main>
       <Footer />
-      <SupportWidget isOpen={isSupportOpen} onClose={() => setIsSupportOpen(false)} />
+      {isAuthenticated && (
+        <SupportWidget isOpen={isSupportOpen} onClose={() => setIsSupportOpen(false)} />
+      )}
     </div>
   );
 }

@@ -37,12 +37,26 @@ export const API = {
     }
   },
 
-  registerUser: async (username: string, email: string, password: string) => {
+  requestRegistrationCode: async (username: string, email: string, password: string) => {
     try {
-      const response = await fetch(`${API_URL}/register`, {
+      const response = await fetch(`${API_URL}/register/request-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, email, password }),
+      });
+      return await response.json();
+    } catch (error) {
+      console.error(error);
+      return { success: false, message: 'Ошибка соединения с сервером' };
+    }
+  },
+
+  verifyRegistrationCode: async (email: string, code: string) => {
+    try {
+      const response = await fetch(`${API_URL}/register/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code }),
       });
       return await response.json();
     } catch (error) {
@@ -236,13 +250,18 @@ export const API = {
     };
   },
 
-  getSupportMessages: async (conversationId: number, clientId: string, afterId = 0) => {
+  getSupportMessages: async (
+    conversationId: number,
+    clientId: string,
+    userId: string,
+    afterId = 0,
+  ) => {
     const response = await fetch(
-      `${API_URL}/support/conversations/${conversationId}/messages?clientId=${encodeURIComponent(clientId)}&afterId=${afterId}`,
+      `${API_URL}/support/conversations/${conversationId}/messages?clientId=${encodeURIComponent(clientId)}&userId=${encodeURIComponent(userId)}&afterId=${afterId}`,
     );
     return await response.json();
   },
 
-  buildSupportStreamUrl: (conversationId: number, clientId: string) =>
-    `${API_URL}/support/conversations/${conversationId}/stream?clientId=${encodeURIComponent(clientId)}`,
+  buildSupportStreamUrl: (conversationId: number, clientId: string, userId: string) =>
+    `${API_URL}/support/conversations/${conversationId}/stream?clientId=${encodeURIComponent(clientId)}&userId=${encodeURIComponent(userId)}`,
 };

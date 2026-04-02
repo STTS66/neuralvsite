@@ -19,6 +19,7 @@
     "google-auth-library": "^10.5.0",
     "multer": "^2.0.2",
     "node-fetch": "^3.3.2",
+    "nodemailer": "^8.0.4",
     "pg": "^8.20.0"
   }
 }

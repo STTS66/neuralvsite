@@ -1,20 +1,24 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Headset, LogOut, Menu, Shield, User, X } from 'lucide-react';
+import { LogOut, Menu, Shield, User, X } from 'lucide-react';
 import './Navbar.css';
 
 interface NavbarProps {
+  canUseSupport: boolean;
   onSupportOpen: () => void;
 }
 
-const Navbar: React.FC<NavbarProps> = ({ onSupportOpen }) => {
+type NavbarLinkItem = { name: string; path: string } | { name: string; action: 'support' };
+
+const Navbar: React.FC<NavbarProps> = ({ canUseSupport, onSupportOpen }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const navigate = useNavigate();
 
   const role = localStorage.getItem('neuralv_role');
+  const username = localStorage.getItem('neuralv_username');
 
   useEffect(() => {
     const handleScroll = () => {
@@ -32,13 +36,21 @@ const Navbar: React.FC<NavbarProps> = ({ onSupportOpen }) => {
     setIsOpen(false);
     setShowDropdown(false);
     navigate('/');
+    window.location.reload();
   };
 
-  const navLinks = [
-    { name: 'ГЛАВНАЯ', path: '/' },
-    { name: 'ГАЙД', path: '/guide' },
-    { name: 'ПОДДЕРЖКА', action: 'support' as const },
-  ];
+  const navLinks = useMemo(() => {
+    const links: NavbarLinkItem[] = [
+      { name: 'Главная', path: '/' },
+      { name: 'Гайд', path: '/guide' },
+    ];
+
+    if (canUseSupport) {
+      links.push({ name: 'Поддержка', action: 'support' as const });
+    }
+
+    return links;
+  }, [canUseSupport]);
 
   return (
     <>
@@ -58,7 +70,7 @@ const Navbar: React.FC<NavbarProps> = ({ onSupportOpen }) => {
 
           <nav className="nav-center">
             {navLinks.map((link) =>
-              link.action === 'support' ? (
+              'action' in link ? (
                 <button
                   key={link.name}
                   type="button"
@@ -80,11 +92,6 @@ const Navbar: React.FC<NavbarProps> = ({ onSupportOpen }) => {
           </nav>
 
           <div className="nav-actions">
-            <button type="button" className="nav-btn nav-btn-support" onClick={onSupportOpen}>
-              <Headset size={16} />
-              <span>Поддержка</span>
-            </button>
-
             {role ? (
               <div className="user-menu-container">
                 <div
@@ -99,7 +106,7 @@ const Navbar: React.FC<NavbarProps> = ({ onSupportOpen }) => {
                     }
                   }}
                 >
-                  <span className="nav-username">{localStorage.getItem('neuralv_username')}</span>
+                  <span className="nav-username">{username}</span>
                   <div className="avatar-tiktok">
                     <User size={20} color="#fff" />
                   </div>
@@ -119,10 +126,10 @@ const Navbar: React.FC<NavbarProps> = ({ onSupportOpen }) => {
                         className="dropdown-item"
                         onClick={() => setShowDropdown(false)}
                       >
-                        {role === 'admin' ? 'АДМИН-ПАНЕЛЬ' : 'КАБИНЕТ'}
+                        {role === 'admin' ? 'Админ-панель' : 'Кабинет'}
                       </NavLink>
                       <button onClick={handleLogout} className="dropdown-item text-danger" type="button">
-                        <LogOut size={16} /> ВЫХОД
+                        <LogOut size={16} /> Выйти
                       </button>
                     </motion.div>
                   )}
@@ -131,7 +138,7 @@ const Navbar: React.FC<NavbarProps> = ({ onSupportOpen }) => {
             ) : (
               <NavLink to="/login" className="nav-btn nav-btn-auth">
                 <User size={16} />
-                <span>ВХОД</span>
+                <span>Вход</span>
               </NavLink>
             )}
           </div>
@@ -153,7 +160,7 @@ const Navbar: React.FC<NavbarProps> = ({ onSupportOpen }) => {
           >
             <div className="mobile-nav-items">
               {navLinks.map((link) =>
-                link.action === 'support' ? (
+                'action' in link ? (
                   <button
                     key={link.name}
                     type="button"
@@ -179,11 +186,11 @@ const Navbar: React.FC<NavbarProps> = ({ onSupportOpen }) => {
 
               {role ? (
                 <button onClick={handleLogout} className="mobile-nav-item logout-text" type="button">
-                  ВЫХОД
+                  Выйти
                 </button>
               ) : (
                 <NavLink to="/login" className="mobile-nav-item auth-text" onClick={() => setIsOpen(false)}>
-                  ВХОД
+                  Вход
                 </NavLink>
               )}
             </div>

@@ -82,6 +82,27 @@
   box-shadow: 0 4px 10px rgba(255, 255, 255, 0.2);
 }
 
+.auth-message {
+  margin-bottom: 20px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  text-align: center;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.auth-message-error {
+  background: rgba(239, 68, 68, 0.14);
+  color: #fecaca;
+  border: 1px solid rgba(248, 113, 113, 0.2);
+}
+
+.auth-message-info {
+  background: rgba(59, 130, 246, 0.14);
+  color: #dbeafe;
+  border: 1px solid rgba(96, 165, 250, 0.2);
+}
+
 .auth-form {
   display: flex;
   flex-direction: column;
@@ -124,6 +145,34 @@
   font-size: 1.05rem;
   display: flex;
   gap: 8px;
+}
+
+.auth-actions-row {
+  margin-top: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.auth-link-btn {
+  flex: 1;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #d1d5db;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.auth-link-btn:hover:not(:disabled) {
+  color: #fff;
+}
+
+.auth-link-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .forgot-password {
