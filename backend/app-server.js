@@ -1856,6 +1856,45 @@ app.post(
 app.use('/api/internal', requireInternalToken);
 
 app.get(
+  '/api/internal/admin/state',
+  asyncRoute(async (_req, res) => {
+    const settings = await getSupportSettings();
+
+    res.json({
+      success: true,
+      adminNotifyChatId: settings.admin_notify_chat_id || null,
+      adminNotifyThreadId: settings.admin_notify_thread_id || null,
+    });
+  }),
+);
+
+app.post(
+  '/api/internal/admin/settings',
+  asyncRoute(async (req, res) => {
+    if (Object.prototype.hasOwnProperty.call(req.body, 'adminNotifyChatId')) {
+      await setSupportSetting(
+        'admin_notify_chat_id',
+        toNullableTelegramId(req.body.adminNotifyChatId),
+      );
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'adminNotifyThreadId')) {
+      await setSupportSetting(
+        'admin_notify_thread_id',
+        toNullableTelegramId(req.body.adminNotifyThreadId),
+      );
+    }
+
+    const settings = await getSupportSettings();
+    res.json({
+      success: true,
+      adminNotifyChatId: settings.admin_notify_chat_id || null,
+      adminNotifyThreadId: settings.admin_notify_thread_id || null,
+    });
+  }),
+);
+
+app.get(
   '/api/internal/admin/orders/outbox',
   asyncRoute(async (req, res) => {
     const limit = Math.max(1, Math.min(50, toNullableInteger(req.query.limit) || 20));

@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 import httpx
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ChatType, ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 
@@ -41,6 +42,16 @@ class AdminNotifyApi:
     async def close(self) -> None:
         await self.client.aclose()
 
+    async def get_state(self) -> dict:
+        response = await self.client.get("/state")
+        response.raise_for_status()
+        return response.json()
+
+    async def set_settings(self, **settings: str | None) -> dict:
+        response = await self.client.post("/settings", json=settings)
+        response.raise_for_status()
+        return response.json()
+
     async def fetch_outbox(self) -> list[dict]:
         response = await self.client.get("/orders/outbox", params={"limit": 20})
         response.raise_for_status()
@@ -53,9 +64,11 @@ class AdminNotifyApi:
 
 def format_timestamp(value: str) -> str:
     try:
-      return datetime.fromisoformat(value.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
     except ValueError:
-      return value
+        return value
 
 
 def build_admin_url(account_id: str | None) -> str | None:
@@ -93,7 +106,7 @@ def render_order_text(item: dict) -> str:
         parts.append("<b>Файл:</b> Пользователь прикрепил файл")
 
     parts.append("")
-    parts.append("Открой админ-панель, чтобы посмотреть профиль и проверить заявку.")
+    parts.append("Открой админ-панель, чтобы посмотреть профиль и обработать заявку.")
     return "\n".join(parts)
 
 
@@ -103,11 +116,16 @@ def build_keyboard(item: dict) -> InlineKeyboardMarkup | None:
         return None
 
     return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(text="Открыть профиль", url=admin_url),
-            ]
-        ]
+        [[InlineKeyboardButton(text="Открыть профиль", url=admin_url)]]
+    )
+
+
+def build_help_text() -> str:
+    return (
+        "Команды admin-бота:\n"
+        "/status - показать текущую настройку\n"
+        "/setchat - привязать текущую группу для уведомлений\n"
+        "/settopic - привязать текущую тему форума"
     )
 
 
@@ -116,39 +134,101 @@ async def get_api(context: ContextTypes.DEFAULT_TYPE) -> AdminNotifyApi:
 
 
 async def start_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.effective_message.reply_text(build_help_text())
+
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    api = await get_api(context)
+    state = await api.get_state()
+    chat_id = state.get("adminNotifyChatId") or "не задан"
+    topic_id = state.get("adminNotifyThreadId") or "не задана"
+    direct_ids = ", ".join(ADMIN_NOTIFY_CHAT_IDS) if ADMIN_NOTIFY_CHAT_IDS else "не заданы"
+
     await update.effective_message.reply_text(
-        "Бот уведомляет админов о новых заявках и отправляет ссылку в админ-панель."
+        f"Группа: {chat_id}\n"
+        f"Тема: {topic_id}\n"
+        f"Резервные direct ID: {direct_ids}\n"
+        f"Ссылка на админку: {ADMIN_PANEL_URL or 'не задана'}"
     )
 
 
-async def status_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
-    target_info = ", ".join(ADMIN_NOTIFY_CHAT_IDS) if ADMIN_NOTIFY_CHAT_IDS else "не заданы"
+async def set_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
+        await update.effective_message.reply_text(
+            "Команду /setchat нужно запускать внутри нужной группы."
+        )
+        return
+
+    api = await get_api(context)
+    result = await api.set_settings(adminNotifyChatId=str(update.effective_chat.id))
+
+    if result.get("success"):
+        await update.effective_message.reply_text(
+            f"Группа уведомлений сохранена: {update.effective_chat.id}"
+        )
+        return
+
     await update.effective_message.reply_text(
-        f"Получатели: {target_info}\n"
-        f"Ссылка на админку: {ADMIN_PANEL_URL or 'не задана'}\n"
-        f"Интервал опроса: {POLL_INTERVAL_SECONDS} сек"
+        result.get("message", "Не удалось сохранить группу уведомлений.")
+    )
+
+
+async def set_topic_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    api = await get_api(context)
+    thread_id = update.effective_message.message_thread_id
+    result = await api.set_settings(
+        adminNotifyThreadId=str(thread_id) if thread_id else None,
+    )
+
+    if result.get("success"):
+        if thread_id:
+            await update.effective_message.reply_text(
+                f"Тема уведомлений сохранена: {thread_id}"
+            )
+        else:
+            await update.effective_message.reply_text(
+                "Тема очищена. Уведомления будут идти в основной чат."
+            )
+        return
+
+    await update.effective_message.reply_text(
+        result.get("message", "Не удалось сохранить тему уведомлений.")
     )
 
 
 async def sync_outbox(context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not ADMIN_NOTIFY_CHAT_IDS:
-        return
-
     api = await get_api(context)
 
     try:
+        state = await api.get_state()
+        chat_id = state.get("adminNotifyChatId")
+        thread_id = state.get("adminNotifyThreadId")
         items = await api.fetch_outbox()
+
         for item in items:
             keyboard = build_keyboard(item)
 
-            for chat_id in ADMIN_NOTIFY_CHAT_IDS:
+            if chat_id:
                 await context.bot.send_message(
                     chat_id=int(chat_id),
+                    message_thread_id=int(thread_id) if thread_id else None,
                     text=render_order_text(item),
                     reply_markup=keyboard,
                     disable_web_page_preview=True,
-                    parse_mode="HTML",
+                    parse_mode=ParseMode.HTML,
                 )
+            else:
+                if not ADMIN_NOTIFY_CHAT_IDS:
+                    continue
+
+                for target_chat_id in ADMIN_NOTIFY_CHAT_IDS:
+                    await context.bot.send_message(
+                        chat_id=int(target_chat_id),
+                        text=render_order_text(item),
+                        reply_markup=keyboard,
+                        disable_web_page_preview=True,
+                        parse_mode=ParseMode.HTML,
+                    )
 
             await api.mark_delivered(item["id"])
     except Exception:
@@ -158,8 +238,10 @@ async def sync_outbox(context: ContextTypes.DEFAULT_TYPE) -> None:
 async def set_commands(application: Application) -> None:
     await application.bot.set_my_commands(
         [
-            BotCommand("start", "Показать описание бота"),
-            BotCommand("status", "Показать текущую настройку"),
+            BotCommand("start", "Показать помощь"),
+            BotCommand("status", "Показать статус уведомлений"),
+            BotCommand("setchat", "Сохранить текущую группу"),
+            BotCommand("settopic", "Сохранить текущую тему"),
         ]
     )
 
@@ -186,6 +268,8 @@ def main() -> None:
     application.add_error_handler(error_handler)
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("setchat", set_chat_command))
+    application.add_handler(CommandHandler("settopic", set_topic_command))
 
     application.job_queue.run_repeating(
         sync_outbox,
