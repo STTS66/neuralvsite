@@ -1,0 +1,113 @@
+.ban-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(2, 6, 23, 0.9);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.ban-card {
+  width: min(560px, 100%);
+  padding: 32px;
+  border-radius: 28px;
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  background: linear-gradient(180deg, #112840 0%, #091724 100%);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42);
+  color: #f8fafc;
+  text-align: center;
+}
+
+.ban-icon-shell {
+  width: 68px;
+  height: 68px;
+  margin: 0 auto 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 22px;
+  color: #fee2e2;
+  background: linear-gradient(135deg, rgba(248, 113, 113, 0.26), rgba(239, 68, 68, 0.12));
+  border: 1px solid rgba(248, 113, 113, 0.22);
+}
+
+.ban-card h2 {
+  margin: 0;
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-weight: 800;
+}
+
+.ban-message {
+  margin: 14px 0 0;
+  color: rgba(226, 232, 240, 0.84);
+  line-height: 1.6;
+}
+
+.ban-details {
+  margin-top: 24px;
+  display: grid;
+  gap: 12px;
+}
+
+.ban-detail-item {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.44);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  text-align: left;
+}
+
+.ban-detail-item span {
+  display: block;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(148, 163, 184, 0.84);
+}
+
+.ban-detail-item strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.98rem;
+  color: #f8fafc;
+  line-height: 1.5;
+}
+
+.ban-note {
+  margin: 20px 0 0;
+  color: rgba(191, 219, 254, 0.82);
+  line-height: 1.55;
+}
+
+.ban-logout-button {
+  margin-top: 24px;
+  width: 100%;
+  border: none;
+  border-radius: 16px;
+  padding: 14px 18px;
+  font: inherit;
+  font-weight: 700;
+  color: #04111e;
+  background: linear-gradient(135deg, #f8fafc 0%, #7dd3fc 100%);
+  cursor: pointer;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.ban-logout-button:hover {
+  transform: translateY(-1px);
+}
+
+@media (max-width: 640px) {
+  .ban-overlay {
+    padding: 14px;
+  }
+
+  .ban-card {
+    padding: 24px 20px;
+    border-radius: 22px;
+  }
+}

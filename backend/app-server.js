@@ -1118,6 +1118,7 @@ app.post(
         success: false,
         message: buildBanMessage(user),
         bannedUntil: banInfo.bannedUntilIso,
+        banReason: banInfo.reason,
       });
       return;
     }
@@ -1188,6 +1189,7 @@ app.post(
         success: false,
         message: buildBanMessage(user),
         bannedUntil: banInfo.bannedUntilIso,
+        banReason: banInfo.reason,
       });
       return;
     }
@@ -1279,6 +1281,7 @@ app.post(
         success: false,
         message: buildBanMessage(user),
         bannedUntil: banInfo.bannedUntilIso,
+        banReason: banInfo.reason,
       });
       return;
     }
@@ -1627,7 +1630,15 @@ app.get(
       return;
     }
 
-    res.json(user);
+    const banInfo = getActiveBanInfo(user);
+
+    res.json({
+      ...user,
+      isBanned: Boolean(banInfo),
+      bannedUntil: banInfo?.bannedUntilIso || null,
+      banReason: banInfo?.reason || null,
+      banMessage: banInfo ? buildBanMessage(user) : null,
+    });
   }),
 );
 
@@ -1646,6 +1657,17 @@ app.post(
     const user = await getAsync('SELECT * FROM users WHERE id = ?', [userId]);
     if (!user) {
       res.status(404).json({ success: false, message: 'User not found.' });
+      return;
+    }
+
+    const banInfo = getActiveBanInfo(user);
+    if (banInfo) {
+      res.status(423).json({
+        success: false,
+        message: buildBanMessage(user),
+        bannedUntil: banInfo.bannedUntilIso,
+        banReason: banInfo.reason,
+      });
       return;
     }
 
@@ -1728,6 +1750,7 @@ app.post(
         success: false,
         message: buildBanMessage(supportUser),
         bannedUntil: banInfo.bannedUntilIso,
+        banReason: banInfo.reason,
       });
       return;
     }
@@ -1776,6 +1799,7 @@ app.get(
         success: false,
         message: buildBanMessage(supportUser),
         bannedUntil: banInfo.bannedUntilIso,
+        banReason: banInfo.reason,
       });
       return;
     }
@@ -1816,6 +1840,7 @@ app.get(
         success: false,
         message: buildBanMessage(supportUser),
         bannedUntil: banInfo.bannedUntilIso,
+        banReason: banInfo.reason,
       });
       return;
     }
@@ -1865,6 +1890,7 @@ app.post(
         success: false,
         message: buildBanMessage(supportUser),
         bannedUntil: banInfo.bannedUntilIso,
+        banReason: banInfo.reason,
       });
       return;
     }

@@ -28,6 +28,58 @@ export interface SupportSessionResponse {
   message?: string;
 }
 
+export interface UserProfileResponse {
+  id: number;
+  account_id?: string | null;
+  accountId?: string | null;
+  username: string;
+  email?: string | null;
+  role: string;
+  display_name?: string | null;
+  displayName?: string | null;
+  avatar?: string | null;
+  banned_until?: string | null;
+  bannedUntil?: string | null;
+  ban_reason?: string | null;
+  banReason?: string | null;
+  banMessage?: string | null;
+  isBanned?: boolean;
+}
+
+export interface BannedUserEventDetail {
+  isBanned: true;
+  message?: string | null;
+  bannedUntil?: string | null;
+  banReason?: string | null;
+}
+
+export const USER_BANNED_EVENT = 'neuralv:user-banned';
+
+function emitBannedUserEvent(detail: BannedUserEventDetail) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.dispatchEvent(
+    new CustomEvent<BannedUserEventDetail>(USER_BANNED_EVENT, {
+      detail,
+    }),
+  );
+}
+
+function maybeEmitBannedUserEvent(status: number, payload: any) {
+  if (status !== 423 && !payload?.isBanned) {
+    return;
+  }
+
+  emitBannedUserEvent({
+    isBanned: true,
+    message: payload?.message || payload?.banMessage || '',
+    bannedUntil: payload?.bannedUntil || payload?.banned_until || null,
+    banReason: payload?.banReason || payload?.ban_reason || null,
+  });
+}
+
 export interface AdminUserSearchResponse {
   success: boolean;
   user?: {
@@ -148,7 +200,9 @@ export const API = {
       const contentType = response.headers.get('content-type') || '';
 
       if (contentType.includes('application/json')) {
-        return await response.json();
+        const data = await response.json();
+        maybeEmitBannedUserEvent(response.status, data);
+        return data;
       }
 
       if (response.status === 413) {
@@ -206,10 +260,12 @@ export const API = {
     }
   },
 
-  getUserProfile: async (userId: string) => {
+  getUserProfile: async (userId: string): Promise<UserProfileResponse | null> => {
     try {
       const response = await fetch(`${API_URL}/user/${userId}`);
-      return await response.json();
+      const data = await response.json();
+      maybeEmitBannedUserEvent(response.status, data);
+      return data;
     } catch (error) {
       console.error(error);
       return null;
@@ -240,7 +296,9 @@ export const API = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bodyData),
       });
-      return await response.json();
+      const data = await response.json();
+      maybeEmitBannedUserEvent(response.status, data);
+      return data;
     } catch (error: any) {
       console.error(error);
       return { success: false, message: error.message };
@@ -319,8 +377,9 @@ export const API = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientId, userId, displayName }),
     });
-
-    return await response.json();
+    const data = await response.json();
+    maybeEmitBannedUserEvent(response.status, data);
+    return data;
   },
 
   sendSupportMessage: async (payload: {
@@ -337,6 +396,7 @@ export const API = {
     });
 
     const data = await response.json();
+    maybeEmitBannedUserEvent(response.status, data);
     return {
       status: response.status,
       ...data,
