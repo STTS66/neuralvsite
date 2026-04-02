@@ -1,5 +1,5 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const multer = require('multer');
@@ -26,7 +26,8 @@ const SUPPORT_ADMIN_TELEGRAM_IDS = (process.env.SUPPORT_ADMIN_TELEGRAM_IDS || ''
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'database.db');
+const DATABASE_URL =
+  process.env.DATABASE_URL || 'postgresql://postgres:postgres@postgres:5432/neuralv';
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
 
 function ensureDirectory(targetPath) {
@@ -35,7 +36,6 @@ function ensureDirectory(targetPath) {
   }
 }
 
-ensureDirectory(path.dirname(DB_PATH));
 ensureDirectory(UPLOAD_DIR);
 
 app.use(cors({ origin: true, credentials: true }));
@@ -50,66 +50,46 @@ app.use((req, _res, next) => {
   next();
 });
 
-const db = new sqlite3.Database(DB_PATH, (error) => {
-  if (error) {
-    console.error('Error opening database:', error.message);
-    process.exit(1);
-  }
+const pool = new Pool({
+  connectionString: DATABASE_URL,
 });
 
-function runAsync(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function onRun(error) {
-      if (error) {
-        reject(error);
-        return;
-      }
+pool.on('error', (error) => {
+  console.error('Unexpected PostgreSQL error:', error);
+});
 
-      resolve({
-        lastID: this.lastID,
-        changes: this.changes,
-      });
-    });
+function withPgPlaceholders(sql) {
+  let index = 0;
+  return sql.replace(/\?/g, () => {
+    index += 1;
+    return `$${index}`;
   });
 }
 
-function getAsync(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (error, row) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-
-      resolve(row || null);
-    });
-  });
+function prepareSql(sql) {
+  return withPgPlaceholders(sql).trim();
 }
 
-function allAsync(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (error, rows) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-
-      resolve(rows || []);
-    });
-  });
+async function runAsync(sql, params = []) {
+  const result = await pool.query(prepareSql(sql), params);
+  return {
+    lastID: result.rows[0]?.id ?? null,
+    changes: result.rowCount ?? 0,
+  };
 }
 
-function execAsync(sql) {
-  return new Promise((resolve, reject) => {
-    db.exec(sql, (error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
+async function getAsync(sql, params = []) {
+  const result = await pool.query(prepareSql(sql), params);
+  return result.rows[0] || null;
+}
 
-      resolve();
-    });
-  });
+async function allAsync(sql, params = []) {
+  const result = await pool.query(prepareSql(sql), params);
+  return result.rows || [];
+}
+
+async function execAsync(sql) {
+  await pool.query(sql);
 }
 
 function asyncRoute(handler) {
@@ -282,6 +262,7 @@ async function getOrCreateSupportConversation({ clientId, userId, displayName })
           created_at,
           updated_at
         ) VALUES (?, ?, ?, ?, 'open', ?, ?)
+        RETURNING id
       `,
       [publicId, clientId, normalizedUserId, resolvedName, timestamp, timestamp],
     );
@@ -360,7 +341,7 @@ function broadcastSupportMessage(conversationId, message) {
 
 async function getSupportAdminCount() {
   const row = await getAsync('SELECT COUNT(*) AS count FROM support_admins');
-  return row?.count || 0;
+  return Number(row?.count || 0);
 }
 
 async function getSupportAdminByTelegramId(telegramUserId) {
@@ -410,12 +391,8 @@ const upload = multer({ storage });
 
 async function initializeDatabase() {
   await execAsync(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
-    PRAGMA busy_timeout = 5000;
-
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       username TEXT UNIQUE,
       email TEXT UNIQUE,
       password TEXT,
@@ -425,38 +402,38 @@ async function initializeDatabase() {
     );
 
     CREATE TABLE IF NOT EXISTS orders (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       user_id INTEGER,
       link TEXT,
       file_path TEXT,
       status TEXT DEFAULT 'pending',
       license_key TEXT,
-      created_at TEXT,
+      created_at TIMESTAMPTZ,
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS support_conversations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       public_id TEXT UNIQUE NOT NULL,
       client_id TEXT NOT NULL,
       user_id INTEGER,
       display_name TEXT,
       status TEXT DEFAULT 'open',
-      last_user_message_at TEXT,
-      last_support_message_at TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
+      last_user_message_at TIMESTAMPTZ,
+      last_support_message_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS support_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       conversation_id INTEGER NOT NULL,
       sender_type TEXT NOT NULL,
       sender_name TEXT NOT NULL,
       text TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      telegram_delivered INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL,
+      telegram_delivered BOOLEAN DEFAULT FALSE,
       telegram_chat_id TEXT,
       telegram_thread_id TEXT,
       telegram_message_id INTEGER,
@@ -464,18 +441,18 @@ async function initializeDatabase() {
     );
 
     CREATE TABLE IF NOT EXISTS support_admins (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       telegram_user_id TEXT UNIQUE NOT NULL,
       username TEXT,
       first_name TEXT,
       added_by TEXT,
-      created_at TEXT NOT NULL
+      created_at TIMESTAMPTZ NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS support_settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TIMESTAMPTZ NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
@@ -484,10 +461,6 @@ async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_support_messages_outbox ON support_messages(telegram_delivered, sender_type, id);
     CREATE INDEX IF NOT EXISTS idx_support_messages_telegram_lookup ON support_messages(telegram_chat_id, telegram_message_id);
   `);
-
-  await runAsync('ALTER TABLE users ADD COLUMN display_name TEXT').catch(() => {});
-  await runAsync('ALTER TABLE users ADD COLUMN avatar TEXT').catch(() => {});
-  await runAsync('ALTER TABLE orders ADD COLUMN file_path TEXT').catch(() => {});
 
   const existingAdmin = await getAsync(
     "SELECT id FROM users WHERE role = 'admin' LIMIT 1",
@@ -499,6 +472,7 @@ async function initializeDatabase() {
       `
         INSERT INTO users (username, email, password, role)
         VALUES (?, ?, ?, 'admin')
+        RETURNING id
       `,
       [DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_EMAIL, passwordHash],
     );
@@ -508,13 +482,14 @@ async function initializeDatabase() {
   for (const telegramUserId of SUPPORT_ADMIN_TELEGRAM_IDS) {
     await runAsync(
       `
-        INSERT OR IGNORE INTO support_admins (
+        INSERT INTO support_admins (
           telegram_user_id,
           username,
           first_name,
           added_by,
           created_at
         ) VALUES (?, NULL, NULL, 'env', ?)
+        ON CONFLICT (telegram_user_id) DO NOTHING
       `,
       [telegramUserId, nowIso()],
     );
@@ -552,7 +527,7 @@ app.post(
 
       res.json({ success: true, message: 'Аккаунт успешно создан.' });
     } catch (error) {
-      if (error.message.includes('UNIQUE constraint failed')) {
+      if (error.code === '23505' || error.message.includes('duplicate key')) {
         res.json({
           success: false,
           message: 'Пользователь с таким именем или email уже существует.',
@@ -636,6 +611,7 @@ app.post(
         `
           INSERT INTO users (username, email, password, role)
           VALUES (?, ?, 'GOOGLE_AUTH_USER', 'user')
+          RETURNING id
         `,
         [name, email],
       );
@@ -687,6 +663,7 @@ app.post(
       `
         INSERT INTO orders (user_id, link, file_path, status, created_at)
         VALUES (?, ?, ?, 'pending', ?)
+        RETURNING id
       `,
       [userId, link || null, filePath, createdAt],
     );
@@ -1063,7 +1040,8 @@ app.post(
           text,
           created_at,
           telegram_delivered
-        ) VALUES (?, 'user', ?, ?, ?, 0)
+        ) VALUES (?, 'user', ?, ?, ?, FALSE)
+        RETURNING id
       `,
       [conversationId, senderName, text, createdAt],
     );
@@ -1268,7 +1246,7 @@ app.get(
         INNER JOIN support_conversations
           ON support_conversations.id = support_messages.conversation_id
         WHERE support_messages.sender_type = 'user'
-          AND support_messages.telegram_delivered = 0
+          AND support_messages.telegram_delivered = FALSE
         ORDER BY support_messages.id ASC
         LIMIT ?
       `,
@@ -1311,7 +1289,7 @@ app.post(
     await runAsync(
       `
         UPDATE support_messages
-        SET telegram_delivered = 1,
+        SET telegram_delivered = TRUE,
             telegram_chat_id = ?,
             telegram_thread_id = ?,
             telegram_message_id = ?
@@ -1411,7 +1389,8 @@ app.post(
           text,
           created_at,
           telegram_delivered
-        ) VALUES (?, 'support', ?, ?, ?, 1)
+        ) VALUES (?, 'support', ?, ?, ?, TRUE)
+        RETURNING id
       `,
       [conversationId, senderName, text, createdAt],
     );

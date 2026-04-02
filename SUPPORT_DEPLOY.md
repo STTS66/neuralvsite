@@ -3,10 +3,11 @@
 ## 1. Prepare environment
 
 1. Copy `.env.example` to `.env`
-2. Fill in `TELEGRAM_BOT_TOKEN`
-3. Fill in `SUPPORT_INTERNAL_TOKEN` with a long random string
-4. Fill in `SUPPORT_ADMIN_TELEGRAM_IDS` with your Telegram ID
-5. Change `DEFAULT_ADMIN_PASSWORD`
+2. Fill in `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
+3. Fill in `TELEGRAM_BOT_TOKEN`
+4. Fill in `SUPPORT_INTERNAL_TOKEN` with a long random string
+5. Fill in `SUPPORT_ADMIN_TELEGRAM_IDS` with your Telegram ID
+6. Change `DEFAULT_ADMIN_PASSWORD`
 
 ## 2. Build and start
 
