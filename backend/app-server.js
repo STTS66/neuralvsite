@@ -705,7 +705,6 @@ async function initializeDatabase() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_account_id ON users(account_id);
     CREATE INDEX IF NOT EXISTS idx_email_verification_requests_expires_at ON email_verification_requests(expires_at);
     CREATE INDEX IF NOT EXISTS idx_email_verification_requests_username ON email_verification_requests(username);
     CREATE INDEX IF NOT EXISTS idx_support_conversations_client_id ON support_conversations(client_id);
@@ -764,6 +763,10 @@ async function initializeDatabase() {
       user.id,
     ]);
   }
+
+  await execAsync(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_account_id ON users(account_id);
+  `);
 
   const existingAdmin = await getAsync(
     "SELECT id FROM users WHERE role = 'admin' LIMIT 1",
