@@ -118,7 +118,7 @@ const faqItems = [
 
 const Home: React.FC = () => {
   const [showIntro, setShowIntro] = useState(!introShown);
-  const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
+  const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
 
   useEffect(() => {
     if (showIntro) {
