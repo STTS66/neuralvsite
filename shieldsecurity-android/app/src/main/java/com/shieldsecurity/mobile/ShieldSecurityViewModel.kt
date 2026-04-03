@@ -83,7 +83,7 @@ data class ScanState(
     val stageText: String = "",
     val threatTitle: String = "Угроз не обнаружено",
     val threatDescription: String = "ShieldSecurity следит за системой и пока не нашёл подозрительных файлов.",
-    val lastScanLabel: String = "Последняя проверка ещё не запускалась.",
+    val lastScanLabel: String = "Последняя: проверки ещё не было",
 )
 
 data class ShieldSecurityUiState(
@@ -465,7 +465,7 @@ class ShieldSecurityViewModel(
                         stageText = "Проверка завершена",
                         threatTitle = "Угроз не обнаружено",
                         threatDescription = subtitle,
-                        lastScanLabel = "Последняя проверка: ${record.title} · ${record.finishedAt}",
+                        lastScanLabel = "Последняя: ${record.finishedAt}",
                     ),
                 )
             }
@@ -513,7 +513,6 @@ class ShieldSecurityViewModel(
     private fun validatePassword(password: String): String? {
         return when {
             password.length < 6 -> "Пароль должен быть не короче 6 символов."
-            !password.any { !it.isLetterOrDigit() } -> "Пароль должен содержать хотя бы один символ."
             else -> null
         }
     }

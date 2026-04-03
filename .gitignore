@@ -28,3 +28,4 @@ shieldsecurity-android/.gradle/
 shieldsecurity-android/**/build/
 shieldsecurity-android/local.properties
 shieldsecurity-android/.idea/
+shieldsecurity-android/assets/
