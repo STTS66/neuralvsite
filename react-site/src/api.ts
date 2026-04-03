@@ -1,5 +1,55 @@
 export const API_URL =
   import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3000/api' : '/api');
+export const ADMIN_SESSION_STORAGE_KEY = 'neuralv_admin_token';
+
+export function getStoredAdminSessionToken() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  return localStorage.getItem(ADMIN_SESSION_STORAGE_KEY);
+}
+
+export function clearStoredAuth() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  localStorage.removeItem('neuralv_id');
+  localStorage.removeItem('neuralv_username');
+  localStorage.removeItem('neuralv_role');
+  localStorage.removeItem(ADMIN_SESSION_STORAGE_KEY);
+}
+
+function handleAdminAuthFailure() {
+  clearStoredAuth();
+
+  if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+    window.location.href = '/login';
+  }
+}
+
+async function adminFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const adminSessionToken = getStoredAdminSessionToken();
+  if (!adminSessionToken) {
+    handleAdminAuthFailure();
+    throw new Error('Admin session is missing.');
+  }
+
+  const headers = new Headers(init.headers || {});
+  headers.set('X-Admin-Session', adminSessionToken);
+
+  const response = await fetch(input, {
+    ...init,
+    headers,
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    handleAdminAuthFailure();
+  }
+
+  return response;
+}
 
 export interface SupportMessage {
   id: number;
@@ -117,7 +167,7 @@ export interface AdminUserSearchResponse {
 export const API = {
   getUsers: async () => {
     try {
-      const response = await fetch(`${API_URL}/users`);
+      const response = await adminFetch(`${API_URL}/users`);
       return await response.json();
     } catch (error) {
       console.error(error);
@@ -168,9 +218,7 @@ export const API = {
   },
 
   logout: (navigate: (path: string) => void) => {
-    localStorage.removeItem('neuralv_id');
-    localStorage.removeItem('neuralv_username');
-    localStorage.removeItem('neuralv_role');
+    clearStoredAuth();
     navigate('/login');
     window.location.reload();
   },
@@ -178,7 +226,7 @@ export const API = {
   getOrders: async (userId?: string | null) => {
     try {
       const url = userId ? `${API_URL}/orders?user_id=${userId}` : `${API_URL}/orders`;
-      const response = await fetch(url);
+      const response = userId ? await fetch(url) : await adminFetch(url);
       return await response.json();
     } catch (error) {
       console.error(error);
@@ -238,7 +286,7 @@ export const API = {
     }
 
     try {
-      const response = await fetch(`${API_URL}/update-status`, {
+      const response = await adminFetch(`${API_URL}/update-status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, status, licenseKey }),
@@ -252,7 +300,7 @@ export const API = {
 
   deleteOrder: async (id: string) => {
     try {
-      const response = await fetch(`${API_URL}/orders/${id}`, { method: 'DELETE' });
+      const response = await adminFetch(`${API_URL}/orders/${id}`, { method: 'DELETE' });
       return await response.json();
     } catch (error: any) {
       console.error(error);
@@ -307,7 +355,7 @@ export const API = {
 
   searchAdminUserByAccountId: async (accountId: string): Promise<AdminUserSearchResponse> => {
     try {
-      const response = await fetch(
+      const response = await adminFetch(
         `${API_URL}/admin/users/search?accountId=${encodeURIComponent(accountId)}`,
       );
       return await response.json();
@@ -319,7 +367,7 @@ export const API = {
 
   banUserByAccountId: async (accountId: string, durationHours: number, reason: string) => {
     try {
-      const response = await fetch(`${API_URL}/admin/users/ban`, {
+      const response = await adminFetch(`${API_URL}/admin/users/ban`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accountId, durationHours, reason }),
@@ -333,7 +381,7 @@ export const API = {
 
   unbanUserByAccountId: async (accountId: string) => {
     try {
-      const response = await fetch(`${API_URL}/admin/users/unban`, {
+      const response = await adminFetch(`${API_URL}/admin/users/unban`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accountId }),
@@ -347,7 +395,7 @@ export const API = {
 
   scanVirusTotal: async (orderId: string) => {
     try {
-      const response = await fetch(`${API_URL}/virustotal/scan`, {
+      const response = await adminFetch(`${API_URL}/virustotal/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId }),
@@ -360,7 +408,7 @@ export const API = {
 
   getVirusTotalReport: async (analysisId: string) => {
     try {
-      const response = await fetch(`${API_URL}/virustotal/report/${analysisId}`);
+      const response = await adminFetch(`${API_URL}/virustotal/report/${analysisId}`);
       return await response.json();
     } catch (error: any) {
       return { error: true, message: error.message };

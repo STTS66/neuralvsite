@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowRight, Key, Mail, Shield, User } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { API } from '../api';
+import { ADMIN_SESSION_STORAGE_KEY, API, clearStoredAuth } from '../api';
 import './Login.css';
 
 const Login: React.FC = () => {
@@ -23,18 +23,32 @@ const Login: React.FC = () => {
     setInfoMsg('');
   };
 
-  const persistUser = (user: { id: number; username: string; role: string }) => {
+  const persistUser = (
+    user: { id: number; username: string; role: string },
+    adminSessionToken?: string | null,
+  ) => {
+    clearStoredAuth();
     localStorage.setItem('neuralv_id', String(user.id));
     localStorage.setItem('neuralv_username', user.username);
     localStorage.setItem('neuralv_role', user.role);
-    navigate('/');
+
+    if (user.role === 'admin' && adminSessionToken) {
+      localStorage.setItem(ADMIN_SESSION_STORAGE_KEY, adminSessionToken);
+    }
+
+    navigate(user.role === 'admin' ? '/admin' : '/');
     window.location.reload();
   };
 
   const handleLogin = async () => {
     const res = await API.loginUser(username, password);
     if (res.success) {
-      persistUser(res.user);
+      if (res.user?.role === 'admin' && !res.adminSessionToken) {
+        setErrorMsg('Не удалось создать защищённую админ-сессию. Попробуйте войти ещё раз.');
+        return;
+      }
+
+      persistUser(res.user, res.adminSessionToken);
       return;
     }
 

@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { LogOut, Menu, Shield, User, X } from 'lucide-react';
 import './Navbar.css';
+import { clearStoredAuth } from '../api';
 
 interface NavbarProps {
   canUseSupport: boolean;
@@ -30,9 +31,7 @@ const Navbar: React.FC<NavbarProps> = ({ canUseSupport, onSupportOpen }) => {
   }, []);
 
   const handleLogout = () => {
-    localStorage.removeItem('neuralv_id');
-    localStorage.removeItem('neuralv_role');
-    localStorage.removeItem('neuralv_username');
+    clearStoredAuth();
     setIsOpen(false);
     setShowDropdown(false);
     navigate('/');

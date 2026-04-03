@@ -60,6 +60,7 @@ const ORDER_HOURLY_GUARD_MAX_ATTEMPTS = 6;
 const ORDER_HOURLY_GUARD_BLOCK_MS = 4 * 60 * 60 * 1000;
 const MAX_PENDING_ORDERS_PER_USER = 3;
 const DUPLICATE_ORDER_LINK_WINDOW_MS = 12 * 60 * 60 * 1000;
+const ADMIN_SESSION_TTL_MS = Number(process.env.ADMIN_SESSION_TTL_MS || 7 * 24 * 60 * 60 * 1000);
 
 function ensureDirectory(targetPath) {
   if (!fs.existsSync(targetPath)) {
@@ -261,6 +262,99 @@ async function generateUserAccountId() {
 
 function hashVerificationCode(code) {
   return crypto.createHash('sha256').update(String(code)).digest('hex');
+}
+
+function hashAdminSessionToken(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+function generateAdminSessionToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function getAdminSessionTokenFromRequest(req) {
+  const explicitHeader = normalizeText(req.headers['x-admin-session'], 512);
+  if (explicitHeader) {
+    return explicitHeader;
+  }
+
+  const authorization = normalizeText(req.headers.authorization, 512);
+  if (authorization.toLowerCase().startsWith('bearer ')) {
+    return authorization.slice(7).trim();
+  }
+
+  return '';
+}
+
+async function createAdminSession(userId) {
+  const token = generateAdminSessionToken();
+  const tokenHash = hashAdminSessionToken(token);
+  const createdAt = nowIso();
+  const expiresAt = new Date(Date.now() + ADMIN_SESSION_TTL_MS).toISOString();
+
+  await runAsync('DELETE FROM admin_sessions WHERE expires_at <= ?', [createdAt]);
+  await runAsync(
+    `
+      INSERT INTO admin_sessions (user_id, token_hash, expires_at, last_used_at, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `,
+    [userId, tokenHash, expiresAt, createdAt, createdAt],
+  );
+
+  return {
+    token,
+    expiresAt,
+  };
+}
+
+async function getAdminSession(req) {
+  const rawToken = getAdminSessionTokenFromRequest(req);
+  if (!rawToken) {
+    return null;
+  }
+
+  const tokenHash = hashAdminSessionToken(rawToken);
+  const session = await getAsync(
+    `
+      SELECT
+        admin_sessions.id,
+        admin_sessions.user_id,
+        admin_sessions.expires_at,
+        users.role
+      FROM admin_sessions
+      INNER JOIN users ON users.id = admin_sessions.user_id
+      WHERE admin_sessions.token_hash = ?
+      LIMIT 1
+    `,
+    [tokenHash],
+  );
+
+  if (!session) {
+    return null;
+  }
+
+  const expiresAtMs = new Date(session.expires_at).getTime();
+  if (session.role !== 'admin' || Number.isNaN(expiresAtMs) || expiresAtMs <= Date.now()) {
+    await runAsync('DELETE FROM admin_sessions WHERE id = ?', [session.id]);
+    return null;
+  }
+
+  await runAsync('UPDATE admin_sessions SET last_used_at = ? WHERE id = ?', [nowIso(), session.id]);
+
+  return {
+    sessionId: session.id,
+    userId: session.user_id,
+    expiresAt: session.expires_at,
+  };
+}
+
+async function assertAdminSession(req) {
+  const session = await getAdminSession(req);
+  if (!session) {
+    throw createHttpError(401, 'Требуется вход в админ-аккаунт.');
+  }
+
+  return session;
 }
 
 function getActiveBanInfo(user) {
@@ -819,6 +913,23 @@ function requireInternalToken(req, res, next) {
   next();
 }
 
+async function requireAdminSession(req, res, next) {
+  try {
+    req.adminSession = await assertAdminSession(req);
+    next();
+  } catch (error) {
+    if (error?.status) {
+      res.status(error.status).json({
+        success: false,
+        message: error.message || 'Требуется вход в админ-аккаунт.',
+      });
+      return;
+    }
+
+    next(error);
+  }
+}
+
 const storage = multer.diskStorage({
   destination: (_req, _file, callback) => {
     ensureDirectory(UPLOAD_DIR);
@@ -942,6 +1053,16 @@ async function initializeDatabase() {
       UNIQUE(action, scope_type, scope_key)
     );
 
+    CREATE TABLE IF NOT EXISTS admin_sessions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      token_hash TEXT UNIQUE NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      last_used_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
     CREATE INDEX IF NOT EXISTS idx_email_verification_requests_expires_at ON email_verification_requests(expires_at);
     CREATE INDEX IF NOT EXISTS idx_email_verification_requests_username ON email_verification_requests(username);
@@ -950,6 +1071,8 @@ async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_support_messages_outbox ON support_messages(telegram_delivered, sender_type, id);
     CREATE INDEX IF NOT EXISTS idx_support_messages_telegram_lookup ON support_messages(telegram_chat_id, telegram_message_id);
     CREATE INDEX IF NOT EXISTS idx_request_guards_blocked_until ON request_guards(action, blocked_until);
+    CREATE INDEX IF NOT EXISTS idx_admin_sessions_user_id ON admin_sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires_at ON admin_sessions(expires_at);
   `);
 
   await execAsync(`
@@ -1040,6 +1163,8 @@ async function initializeDatabase() {
       [telegramUserId, nowIso()],
     );
   }
+
+  await runAsync('DELETE FROM admin_sessions WHERE expires_at <= ?', [nowIso()]);
 }
 
 app.get('/api/health', (_req, res) => {
@@ -1444,6 +1569,7 @@ app.post(
     }
 
     await clearRequestGuards('login', loginScopes);
+    const adminSession = user.role === 'admin' ? await createAdminSession(user.id) : null;
 
     res.json({
       success: true,
@@ -1453,6 +1579,8 @@ app.post(
         username: user.username,
         role: user.role,
       },
+      adminSessionToken: adminSession?.token || null,
+      adminSessionExpiresAt: adminSession?.expiresAt || null,
     });
   }),
 );
@@ -1745,6 +1873,7 @@ app.post(
 
 app.post(
   '/api/virustotal/scan',
+  requireAdminSession,
   asyncRoute(async (req, res) => {
     if (!VT_API_KEY) {
       res.json({ success: false, message: 'VirusTotal API key is not configured.' });
@@ -1790,6 +1919,7 @@ app.post(
 
 app.get(
   '/api/virustotal/report/:id',
+  requireAdminSession,
   asyncRoute(async (req, res) => {
     if (!VT_API_KEY) {
       res.json({ error: true, message: 'VirusTotal API key is not configured.' });
@@ -1814,6 +1944,10 @@ app.get(
   '/api/orders',
   asyncRoute(async (req, res) => {
     const userId = toNullableInteger(req.query.user_id);
+    if (!userId) {
+      await assertAdminSession(req);
+    }
+
     const params = [];
     let sql = `
       SELECT orders.*, users.username, users.account_id
@@ -1848,6 +1982,7 @@ app.get(
 
 app.get(
   '/api/users',
+  requireAdminSession,
   asyncRoute(async (_req, res) => {
     const rows = await allAsync(
       `
@@ -1871,6 +2006,7 @@ app.get(
 
 app.get(
   '/api/admin/users/search',
+  requireAdminSession,
   asyncRoute(async (req, res) => {
     const accountId = normalizeText(req.query.accountId, 40).toUpperCase();
 
@@ -1968,6 +2104,7 @@ app.get(
 
 app.post(
   '/api/admin/users/ban',
+  requireAdminSession,
   asyncRoute(async (req, res) => {
     const accountId = normalizeText(req.body.accountId, 40).toUpperCase();
     const durationHours = Number(req.body.durationHours || 0);
@@ -1999,6 +2136,7 @@ app.post(
 
 app.post(
   '/api/admin/users/unban',
+  requireAdminSession,
   asyncRoute(async (req, res) => {
     const accountId = normalizeText(req.body.accountId, 40).toUpperCase();
     if (!accountId) {
@@ -2017,6 +2155,7 @@ app.post(
 
 app.post(
   '/api/update-status',
+  requireAdminSession,
   asyncRoute(async (req, res) => {
     const id = toNullableInteger(req.body.id);
     const status = normalizeText(req.body.status, 40);
@@ -2033,6 +2172,7 @@ app.post(
 
 app.delete(
   '/api/orders/:id',
+  requireAdminSession,
   asyncRoute(async (req, res) => {
     const orderId = toNullableInteger(req.params.id);
     const order = await getAsync(

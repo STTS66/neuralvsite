@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import BanOverlay from './components/BanOverlay';
 import Footer from './components/Footer';
@@ -12,7 +12,14 @@ import Dashboard from './pages/Dashboard';
 import Admin from './pages/Admin';
 import Rules from './pages/Rules';
 import Agreement from './pages/Agreement';
-import { API, USER_BANNED_EVENT, type BannedUserEventDetail, type UserProfileResponse } from './api';
+import {
+  API,
+  USER_BANNED_EVENT,
+  clearStoredAuth,
+  getStoredAdminSessionToken,
+  type BannedUserEventDetail,
+  type UserProfileResponse,
+} from './api';
 
 type ActiveBanState = {
   isBanned: true;
@@ -43,6 +50,17 @@ function createBanState(profile?: UserProfileResponse | null): ActiveBanState | 
     bannedUntil,
     banReason: profile.banReason || profile.ban_reason || null,
   };
+}
+
+function ProtectedAdminRoute() {
+  const role = localStorage.getItem('neuralv_role');
+  const adminSessionToken = getStoredAdminSessionToken();
+
+  if (role !== 'admin' || !adminSessionToken) {
+    return <Navigate to={role ? '/dashboard' : '/login'} replace />;
+  }
+
+  return <Admin />;
 }
 
 function App() {
@@ -110,9 +128,7 @@ function App() {
   }, [banState, isSupportOpen]);
 
   const handleLogout = () => {
-    localStorage.removeItem('neuralv_id');
-    localStorage.removeItem('neuralv_username');
-    localStorage.removeItem('neuralv_role');
+    clearStoredAuth();
     setIsSupportOpen(false);
     setBanState(null);
     window.location.href = '/login';
@@ -135,7 +151,7 @@ function App() {
           <Route path="/guide" element={<Guide />} />
           <Route path="/login" element={<Login />} />
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/admin" element={<Admin />} />
+          <Route path="/admin" element={<ProtectedAdminRoute />} />
           <Route path="/rules" element={<Rules />} />
           <Route path="/agreement" element={<Agreement />} />
         </Routes>
