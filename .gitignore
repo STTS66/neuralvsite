@@ -23,3 +23,8 @@ ap1ii/
 
 node_modules/
 dist/
+
+shieldsecurity-android/.gradle/
+shieldsecurity-android/**/build/
+shieldsecurity-android/local.properties
+shieldsecurity-android/.idea/
