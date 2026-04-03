@@ -11,8 +11,8 @@ android {
     applicationId = "com.shieldsecurity.mobile"
     minSdk = 21
     targetSdk = 35
-    versionCode = 3
-    versionName = "1.0.2"
+    versionCode = 4
+    versionName = "1.0.3"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     vectorDrawables {
@@ -64,6 +64,7 @@ dependencies {
   implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
   implementation("androidx.activity:activity-compose:1.9.1")
   implementation("androidx.datastore:datastore-preferences:1.1.1")
+  implementation("androidx.documentfile:documentfile:1.0.1")
   implementation("com.google.android.material:material:1.12.0")
 
   implementation(composeBom)

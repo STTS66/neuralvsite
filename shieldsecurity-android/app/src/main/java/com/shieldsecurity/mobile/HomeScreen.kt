@@ -118,7 +118,7 @@ fun HomeScreen(
                 WideModeCard(
                     title = "Глубокая",
                     description = if (isAuthenticated) {
-                        "Анализирует все файлы телефона и ищет вредоносные объекты."
+                        "Рекурсивно проходит по файлам телефона, архивам, APK и подозрительным скриптам."
                     } else {
                         "Доступна только после входа в аккаунт."
                     },
@@ -140,7 +140,7 @@ fun HomeScreen(
                     CompactModeCard(
                         modifier = Modifier.weight(1f),
                         title = "Быстрая",
-                        description = "Проверяет быстро и охватывает ключевые зоны.",
+                        description = "Сканирует загрузки, документы и свежие APK.",
                         icon = {
                             Icon(
                                 imageVector = Icons.Outlined.Bolt,
@@ -156,7 +156,7 @@ fun HomeScreen(
                     CompactModeCard(
                         modifier = Modifier.weight(1f),
                         title = "Выборочная",
-                        description = "Проверяет выбранные папки, файлы и APK.",
+                        description = "Проверяет выбранную папку или отдельные файлы.",
                         icon = {
                             Icon(
                                 imageVector = Icons.Outlined.TrackChanges,
@@ -293,14 +293,26 @@ private fun ThreatSummaryCard(
             )
 
             StatusPill(
-                iconAsset = if (scanState.isScanning) "alert-circle.png" else "shield.png",
+                iconAsset = if (scanState.isScanning || scanState.findings.isNotEmpty()) {
+                    "alert-circle.png"
+                } else {
+                    "shield.png"
+                },
                 text = if (scanState.isScanning) "Сейчас идёт анализ" else scanState.lastScanLabel,
-                tint = if (scanState.isScanning) WarningAmber else Color(0xFFFFC98A),
+                tint = if (scanState.isScanning || scanState.findings.isNotEmpty()) {
+                    WarningAmber
+                } else {
+                    Color(0xFFFFC98A)
+                },
             )
 
             Text(
-                text = if (isGuest && !scanState.isScanning) {
-                    "В гостевом режиме быстрый и выборочный анализ доступны сразу. Для глубокой проверки сначала войдите."
+                text = if (
+                    isGuest &&
+                    !scanState.isScanning &&
+                    scanState.lastScanLabel == "Последняя: проверки ещё не было"
+                ) {
+                    "В гостевом режиме доступны быстрая и выборочная проверки. Для глубокой проверки сначала войдите."
                 } else {
                     scanState.threatDescription
                 },

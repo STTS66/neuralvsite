@@ -1,7 +1,6 @@
 package com.shieldsecurity.mobile
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,11 +10,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -23,7 +20,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Login
 import androidx.compose.material.icons.outlined.MailOutline
 import androidx.compose.material.icons.outlined.PersonOutline
-import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Button
@@ -50,7 +46,6 @@ import androidx.compose.ui.unit.dp
 import com.shieldsecurity.mobile.ui.components.OtpCodeField
 import com.shieldsecurity.mobile.ui.theme.DangerRed
 import com.shieldsecurity.mobile.ui.theme.ElectricBlue
-import com.shieldsecurity.mobile.ui.theme.TextSecondary
 
 @Composable
 fun AuthenticationScreen(
@@ -78,10 +73,9 @@ fun AuthenticationScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding()
             .navigationBarsPadding()
             .verticalScroll(scrollState)
-            .padding(horizontal = 22.dp, vertical = 18.dp),
+            .padding(horizontal = 22.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.Center,
     ) {
         Surface(
@@ -98,53 +92,11 @@ fun AuthenticationScreen(
                     .padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    Surface(
-                        modifier = Modifier.size(56.dp),
-                        shape = CircleShape,
-                        color = Color(0x162D9CFF),
-                    ) {
-                        androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Outlined.Shield,
-                                contentDescription = null,
-                                tint = ElectricBlue,
-                                modifier = Modifier.size(28.dp),
-                            )
-                        }
-                    }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            text = "ShieldSecurity",
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            text = "Мобильный антивирус с MD3, гостевым режимом и проверкой через код из письма.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = TextSecondary,
-                        )
-                    }
-                }
-
-                AnimatedVisibility(visible = !state.authError.isNullOrBlank()) {
+                if (!state.authError.isNullOrBlank()) {
                     StatusBanner(
                         text = state.authError.orEmpty(),
                         containerColor = DangerRed.copy(alpha = 0.14f),
                         contentColor = DangerRed,
-                    )
-                }
-
-                AnimatedVisibility(visible = !state.authInfo.isNullOrBlank()) {
-                    StatusBanner(
-                        text = state.authInfo.orEmpty(),
-                        containerColor = ElectricBlue.copy(alpha = 0.14f),
-                        contentColor = ElectricBlue,
                     )
                 }
 
@@ -210,11 +162,6 @@ private fun LoginCard(
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.Bold,
         )
-        Text(
-            text = "Введите почту и пароль. После этого откроется окно, где нужно ввести 6 цифр из письма.",
-            color = TextSecondary,
-            style = MaterialTheme.typography.bodyMedium,
-        )
 
         ShieldTextField(
             value = state.loginEmail,
@@ -276,6 +223,14 @@ private fun LoginCard(
             Spacer(modifier = Modifier.width(8.dp))
             Text("Войти в гостевом режиме")
         }
+
+        if (!state.authInfo.isNullOrBlank()) {
+            Text(
+                text = state.authInfo.orEmpty(),
+                color = ElectricBlue,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
     }
 }
 
@@ -297,11 +252,6 @@ private fun RegisterCard(
             style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.Bold,
-        )
-        Text(
-            text = "Имя, почта, пароль и повтор пароля. После этого приложение попросит 6-значный код из письма.",
-            color = TextSecondary,
-            style = MaterialTheme.typography.bodyMedium,
         )
 
         ShieldTextField(
@@ -361,8 +311,19 @@ private fun RegisterCard(
             }
         }
 
-        TextButton(onClick = onSwitchToLogin, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+        TextButton(
+            onClick = onSwitchToLogin,
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+        ) {
             Text("Есть аккаунт?")
+        }
+
+        if (!state.authInfo.isNullOrBlank()) {
+            Text(
+                text = state.authInfo.orEmpty(),
+                color = ElectricBlue,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }
@@ -383,8 +344,8 @@ private fun VerificationCard(
             fontWeight = FontWeight.Bold,
         )
         Text(
-            text = "Для ${pending.email} отправлен 6-значный код. После полного входа откроется главная страница.",
-            color = TextSecondary,
+            text = "Для ${pending.email} отправлен 6-значный код. После подтверждения откроется главная страница.",
+            color = Color(0xFFA8BFD7),
             style = MaterialTheme.typography.bodyMedium,
         )
 

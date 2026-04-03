@@ -1,8 +1,15 @@
 package com.shieldsecurity.mobile
 
+import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.provider.OpenableColumns
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -48,6 +55,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.shieldsecurity.mobile.ui.theme.ElectricBlue
@@ -66,6 +75,7 @@ fun ShieldSecurityApp(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var currentScreen by rememberSaveable { mutableStateOf(RootScreen.Auth.name) }
+    var pendingStorageScan by rememberSaveable { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -74,7 +84,51 @@ fun ShieldSecurityApp(
     ) { uri: Uri? ->
         if (uri != null) {
             val name = resolveFileName(context, uri)
-            viewModel.startApkCheck(name)
+            viewModel.startApkCheck(uri, name)
+        }
+    }
+
+    val treePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+    ) { uri: Uri? ->
+        if (uri == null) {
+            return@rememberLauncherForActivityResult
+        }
+
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+
+        val folderLabel = resolveTreeName(context, uri)
+        viewModel.startCustomScan(uri, folderLabel)
+    }
+
+    val legacyStoragePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val pending = pendingStorageScan?.let { runCatching { ScanMode.valueOf(it) }.getOrNull() }
+        pendingStorageScan = null
+
+        if (granted && pending != null) {
+            viewModel.startScan(pending)
+        } else {
+            viewModel.showInfo("Без доступа к файлам быстрая и глубокая проверка не смогут прочитать хранилище.")
+        }
+    }
+
+    val allFilesAccessLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) {
+        val pending = pendingStorageScan?.let { runCatching { ScanMode.valueOf(it) }.getOrNull() }
+        pendingStorageScan = null
+
+        if (pending != null && hasBroadStorageAccess(context)) {
+            viewModel.startScan(pending)
+        } else if (pending != null) {
+            viewModel.showInfo("Разрешение на доступ к файлам не выдано. Без него полноценная проверка не запустится.")
         }
     }
 
@@ -96,6 +150,32 @@ fun ShieldSecurityApp(
             if (!message.isNullOrBlank()) {
                 snackbarHostState.showSnackbar(message)
             }
+        }
+    }
+
+    fun launchFileScan(mode: ScanMode) {
+        if (mode == ScanMode.Custom) {
+            treePicker.launch(null)
+            return
+        }
+
+        if (mode == ScanMode.Deep && uiState.session.accessLevel != AccessLevel.Authenticated) {
+            currentScreen = RootScreen.Auth.name
+            return
+        }
+
+        if (hasBroadStorageAccess(context)) {
+            viewModel.startScan(mode)
+            return
+        }
+
+        pendingStorageScan = mode.name
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            viewModel.showInfo("Разрешите доступ к файлам, чтобы ${mode.title.lowercase()} проверка увидела хранилище устройства.")
+            allFilesAccessLauncher.launch(createAllFilesAccessIntent(context))
+        } else {
+            legacyStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
     }
 
@@ -124,6 +204,7 @@ fun ShieldSecurityApp(
             ) { screen ->
                 when (screen) {
                     "splash" -> BootScreen()
+
                     RootScreen.History.name -> HistoryScreen(
                         records = uiState.history,
                         onBack = { currentScreen = RootScreen.Home.name },
@@ -138,17 +219,13 @@ fun ShieldSecurityApp(
                             currentScreen = RootScreen.Auth.name
                         },
                         onModeClick = { mode ->
-                            if (mode == ScanMode.Deep && uiState.session.accessLevel != AccessLevel.Authenticated) {
-                                currentScreen = RootScreen.Auth.name
-                            } else {
-                                viewModel.startScan(mode)
-                            }
+                            launchFileScan(mode)
                         },
                         onApkClick = {
                             if (uiState.session.accessLevel != AccessLevel.Authenticated) {
                                 currentScreen = RootScreen.Auth.name
                             } else {
-                                apkPicker.launch("application/vnd.android.package-archive")
+                                apkPicker.launch("*/*")
                             }
                         },
                     )
@@ -224,7 +301,7 @@ private fun BootScreen() {
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = "Подготавливаем защиту, историю проверок и плавный старт приложения.",
+                text = "Подготавливаем локальный движок проверки, историю сканов и защиту устройства.",
                 color = TextSecondary,
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
@@ -232,6 +309,27 @@ private fun BootScreen() {
             Spacer(modifier = Modifier.height(2.dp))
             CircularProgressIndicator(color = ElectricBlue)
         }
+    }
+}
+
+private fun hasBroadStorageAccess(context: Context): Boolean {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        Environment.isExternalStorageManager()
+    } else {
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_EXTERNAL_STORAGE,
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+}
+
+private fun createAllFilesAccessIntent(context: Context): Intent {
+    return try {
+        Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+            data = Uri.parse("package:${context.packageName}")
+        }
+    } catch (_: ActivityNotFoundException) {
+        Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
     }
 }
 
@@ -244,4 +342,17 @@ private fun resolveFileName(context: Context, uri: Uri): String {
         }
     }
     return fileName
+}
+
+private fun resolveTreeName(context: Context, uri: Uri): String {
+    val documentName = DocumentFile.fromTreeUri(context, uri)?.name
+    if (!documentName.isNullOrBlank()) {
+        return documentName
+    }
+
+    return uri.lastPathSegment
+        ?.substringAfterLast(':')
+        ?.replace('/', ' ')
+        ?.ifBlank { "Выбранная папка" }
+        ?: "Выбранная папка"
 }

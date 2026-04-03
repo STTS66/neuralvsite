@@ -1,12 +1,15 @@
 package com.shieldsecurity.mobile
 
 import android.app.Application
-import androidx.datastore.preferences.core.edit
+import android.net.Uri
 import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.shieldsecurity.mobile.scan.LocalThreatScanner
+import com.shieldsecurity.mobile.scan.ThreatFinding
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -42,15 +45,15 @@ enum class VerificationPurpose {
 enum class ScanMode(val title: String, val description: String) {
     Quick(
         title = "Быстрая",
-        description = "Проверяет загрузки, APK и недавние изменения за короткое время.",
+        description = "Проверяет загрузки, свежие APK и самые рискованные папки за короткое время.",
     ),
     Deep(
         title = "Глубокая",
-        description = "Анализирует все доступные файлы телефона и ищет вредоносные объекты.",
+        description = "Рекурсивно анализирует все доступные файлы телефона и ищет вредоносные объекты.",
     ),
     Custom(
         title = "Выборочная",
-        description = "Проверяет только выбранные папки, документы и APK-файлы.",
+        description = "Проверяет только выбранные папки, документы и отдельные APK.",
     ),
 }
 
@@ -74,6 +77,9 @@ data class ScanRecord(
     val finishedAt: String,
     val durationLabel: String,
     val threatCount: Int,
+    val findings: List<ThreatFinding> = emptyList(),
+    val scannedItems: Int = 0,
+    val sourceLabel: String = "",
 )
 
 data class ScanState(
@@ -82,8 +88,9 @@ data class ScanState(
     val progress: Float = 0f,
     val stageText: String = "",
     val threatTitle: String = "Угроз не обнаружено",
-    val threatDescription: String = "ShieldSecurity следит за системой и пока не нашёл подозрительных файлов.",
+    val threatDescription: String = "ShieldSecurity ещё не нашёл подозрительных файлов на устройстве.",
     val lastScanLabel: String = "Последняя: проверки ещё не было",
+    val findings: List<ThreatFinding> = emptyList(),
 )
 
 data class ShieldSecurityUiState(
@@ -111,6 +118,7 @@ class ShieldSecurityViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
 
+    private val scanner = LocalThreatScanner(application.applicationContext)
     private val _uiState = MutableStateFlow(ShieldSecurityUiState())
     val uiState: StateFlow<ShieldSecurityUiState> = _uiState.asStateFlow()
 
@@ -149,7 +157,12 @@ class ShieldSecurityViewModel(
     }
 
     fun updateVerificationCode(value: String) {
-        _uiState.update { it.copy(verificationCode = value.filter(Char::isDigit).take(6), authError = null) }
+        _uiState.update {
+            it.copy(
+                verificationCode = value.filter(Char::isDigit).take(6),
+                authError = null,
+            )
+        }
     }
 
     fun setAuthMode(mode: AuthMode) {
@@ -177,12 +190,7 @@ class ShieldSecurityViewModel(
     }
 
     fun showForgotPasswordHint() {
-        _uiState.update {
-            it.copy(
-                authError = null,
-                authInfo = "Восстановление пароля добавим после подключения почтового API для мобильного приложения.",
-            )
-        }
+        showInfo("Восстановление пароля подключим, когда привяжем реальную почтовую отправку для Android-приложения.")
     }
 
     fun continueAsGuest() {
@@ -212,9 +220,7 @@ class ShieldSecurityViewModel(
         val email = state.loginEmail.trim()
         val password = state.loginPassword
 
-        val validationError = validateEmail(email)
-            ?: validatePassword(password)
-
+        val validationError = validateEmail(email) ?: validatePassword(password)
         if (validationError != null) {
             _uiState.update { it.copy(authError = validationError, authInfo = null) }
             return
@@ -290,7 +296,7 @@ class ShieldSecurityViewModel(
                     verificationCode = "",
                     isAuthLoading = false,
                     authError = null,
-                    authInfo = "Вход подтверждён. Можно запускать глубокую проверку и APK-анализ.",
+                    authInfo = "Вход подтверждён. Теперь доступны глубокая проверка и APK-анализ.",
                 )
             }
         }
@@ -319,14 +325,17 @@ class ShieldSecurityViewModel(
         }
     }
 
+    fun showInfo(message: String) {
+        _uiState.update { it.copy(authInfo = message, authError = null) }
+    }
+
+    fun showError(message: String) {
+        _uiState.update { it.copy(authError = message, authInfo = null) }
+    }
+
     fun startScan(mode: ScanMode): Boolean {
         if (mode == ScanMode.Deep && _uiState.value.session.accessLevel != AccessLevel.Authenticated) {
-            _uiState.update {
-                it.copy(
-                    authInfo = "Для глубокой проверки сначала войдите в аккаунт.",
-                    authError = null,
-                )
-            }
+            showInfo("Для глубокой проверки сначала войдите в аккаунт.")
             return false
         }
 
@@ -334,26 +343,48 @@ class ShieldSecurityViewModel(
             return true
         }
 
-        runScan(
-            title = mode.title,
-            subtitle = when (mode) {
-                ScanMode.Quick -> "Проверены загрузки, APK и ключевые каталоги."
-                ScanMode.Deep -> "Проверены доступные файлы телефона и системные зоны."
-                ScanMode.Custom -> "Проверены выбранные разделы и пользовательские файлы."
-            },
+        val title = when (mode) {
+            ScanMode.Quick -> "Быстрая проверка"
+            ScanMode.Deep -> "Глубокая проверка"
+            ScanMode.Custom -> "Выборочная проверка"
+        }
+
+        launchScan(
+            title = title,
             mode = mode,
-        )
+        ) { progress ->
+            when (mode) {
+                ScanMode.Quick -> scanner.scanQuick(progress)
+                ScanMode.Deep -> scanner.scanDeep(progress)
+                ScanMode.Custom -> error("Для выборочной проверки нужно выбрать папку.")
+            }
+        }
+
         return true
     }
 
-    fun startApkCheck(fileName: String): Boolean {
+    fun startCustomScan(treeUri: Uri, sourceLabel: String): Boolean {
+        if (_uiState.value.scanState.isScanning) {
+            return true
+        }
+
+        launchScan(
+            title = "Выборочная проверка",
+            mode = ScanMode.Custom,
+        ) { progress ->
+            scanner.scanTree(
+                treeUri = treeUri,
+                sourceLabel = sourceLabel,
+                onProgress = progress,
+            )
+        }
+
+        return true
+    }
+
+    fun startApkCheck(apkUri: Uri, fileName: String): Boolean {
         if (_uiState.value.session.accessLevel != AccessLevel.Authenticated) {
-            _uiState.update {
-                it.copy(
-                    authInfo = "Для APK-анализа нужен вход в аккаунт.",
-                    authError = null,
-                )
-            }
+            showInfo("Для APK-анализа нужен вход в аккаунт.")
             return false
         }
 
@@ -361,11 +392,17 @@ class ShieldSecurityViewModel(
             return true
         }
 
-        runScan(
+        launchScan(
             title = "Проверка APK",
-            subtitle = "Файл $fileName проверен сигнатурно и поведенчески.",
             mode = ScanMode.Custom,
-        )
+        ) { progress ->
+            scanner.scanApk(
+                apkUri = apkUri,
+                fileName = fileName,
+                onProgress = progress,
+            )
+        }
+
         return true
     }
 
@@ -392,82 +429,100 @@ class ShieldSecurityViewModel(
         }
     }
 
-    private fun runScan(
+    private fun launchScan(
         title: String,
-        subtitle: String,
         mode: ScanMode,
+        scanCall: suspend (suspend (com.shieldsecurity.mobile.scan.ScanProgressEvent) -> Unit) -> com.shieldsecurity.mobile.scan.ThreatScanReport,
     ) {
         viewModelScope.launch {
-            val startedAt = System.currentTimeMillis()
-            val stages = when (mode) {
-                ScanMode.Quick -> listOf(
-                    "Подготавливаем быстрый анализ...",
-                    "Проверяем недавние загрузки...",
-                    "Сверяем сигнатуры APK...",
-                    "Финализируем результат...",
-                )
-                ScanMode.Deep -> listOf(
-                    "Запускаем глубокий обход файлов...",
-                    "Анализируем каталоги телефона...",
-                    "Ищем вредоносные паттерны и эвристики...",
-                    "Собираем итоговый отчёт...",
-                )
-                ScanMode.Custom -> listOf(
-                    "Подготавливаем выборочную проверку...",
-                    "Считываем выбранные объекты...",
-                    "Сравниваем контрольные суммы и поведение...",
-                    "Формируем результат проверки...",
-                )
-            }
-
             _uiState.update {
                 it.copy(
+                    authError = null,
+                    authInfo = null,
                     scanState = it.scanState.copy(
                         isScanning = true,
                         mode = mode,
-                        progress = 0f,
-                        stageText = stages.first(),
+                        progress = 0.03f,
+                        stageText = "Подготавливаем сканирование...",
                         threatTitle = "Идёт проверка",
-                        threatDescription = "ShieldSecurity плавно анализирует устройство и APK-файлы.",
+                        threatDescription = mode.description,
+                        findings = emptyList(),
                     ),
                 )
             }
 
-            stages.forEachIndexed { index, stage ->
+            try {
+                val report = scanCall { progress ->
+                    _uiState.update { current ->
+                        current.copy(
+                            scanState = current.scanState.copy(
+                                isScanning = true,
+                                mode = mode,
+                                progress = (progress.scannedItems.toFloat() / progress.totalEstimate.toFloat())
+                                    .coerceIn(0.04f, 0.96f),
+                                stageText = "${progress.stage}: ${progress.currentTarget.takeLast(72)}",
+                                threatTitle = "Идёт проверка",
+                                threatDescription = "Проверено файлов: ${progress.scannedItems}",
+                            ),
+                        )
+                    }
+                }
+
+                val record = ScanRecord(
+                    id = System.currentTimeMillis(),
+                    title = title,
+                    subtitle = buildRecordSubtitle(report),
+                    finishedAt = formatNow(),
+                    durationLabel = formatDuration(report.elapsedMs),
+                    threatCount = report.findings.size,
+                    findings = report.findings,
+                    scannedItems = report.scannedItems,
+                    sourceLabel = report.sourceLabel,
+                )
+
+                val topFinding = report.findings.firstOrNull()
+                val summaryTitle = when {
+                    report.findings.isEmpty() -> "Угроз не обнаружено"
+                    report.findings.size == 1 -> "Обнаружена угроза"
+                    else -> "Обнаружено ${report.findings.size} угроз"
+                }
+
+                val summaryDescription = if (topFinding == null) {
+                    buildSafeSummary(report)
+                } else {
+                    "${topFinding.displayName}: ${topFinding.reason}"
+                }
+
                 _uiState.update {
                     it.copy(
+                        history = listOf(record) + it.history,
                         scanState = it.scanState.copy(
-                            stageText = stage,
-                            progress = (index / stages.size.toFloat()).coerceIn(0f, 0.95f),
+                            isScanning = false,
+                            mode = mode,
+                            progress = 1f,
+                            stageText = "Проверка завершена",
+                            threatTitle = summaryTitle,
+                            threatDescription = summaryDescription,
+                            lastScanLabel = "Последняя: ${record.finishedAt}",
+                            findings = report.findings,
                         ),
                     )
                 }
-                delay(700)
-            }
-
-            val durationMs = System.currentTimeMillis() - startedAt
-            val record = ScanRecord(
-                id = startedAt,
-                title = title,
-                subtitle = subtitle,
-                finishedAt = formatNow(),
-                durationLabel = "${(durationMs / 1000f).roundToInt()} сек",
-                threatCount = 0,
-            )
-
-            _uiState.update {
-                it.copy(
-                    history = listOf(record) + it.history,
-                    scanState = it.scanState.copy(
-                        isScanning = false,
-                        mode = mode,
-                        progress = 1f,
-                        stageText = "Проверка завершена",
-                        threatTitle = "Угроз не обнаружено",
-                        threatDescription = subtitle,
-                        lastScanLabel = "Последняя: ${record.finishedAt}",
-                    ),
-                )
+            } catch (error: Exception) {
+                val message = error.message?.takeIf { it.isNotBlank() }
+                    ?: "Не удалось завершить проверку. Повторите ещё раз."
+                _uiState.update {
+                    it.copy(
+                        authInfo = message,
+                        scanState = it.scanState.copy(
+                            isScanning = false,
+                            progress = 0f,
+                            stageText = "",
+                            threatTitle = "Проверка остановлена",
+                            threatDescription = message,
+                        ),
+                    )
+                }
             }
         }
     }
@@ -517,17 +572,60 @@ class ShieldSecurityViewModel(
         }
     }
 
+    private fun buildRecordSubtitle(
+        report: com.shieldsecurity.mobile.scan.ThreatScanReport,
+    ): String {
+        val base = if (report.findings.isEmpty()) {
+            "Проверено ${report.scannedItems} файлов. Подозрительных объектов не найдено."
+        } else {
+            val top = report.findings.first()
+            "Проверено ${report.scannedItems} файлов. Найдено ${report.findings.size} угроз. Главная причина: ${top.reason}."
+        }
+
+        return if (report.limitReached) {
+            "$base Проверка ограничена безопасным лимитом, чтобы не перегружать телефон."
+        } else {
+            base
+        }
+    }
+
+    private fun buildSafeSummary(
+        report: com.shieldsecurity.mobile.scan.ThreatScanReport,
+    ): String {
+        return if (report.limitReached) {
+            "Проверено ${report.scannedItems} файлов. Опасных объектов не найдено, но анализ остановлен на безопасном лимите."
+        } else {
+            "Проверено ${report.scannedItems} файлов. Опасных объектов не найдено."
+        }
+    }
+
+    private fun formatDuration(durationMs: Long): String {
+        val seconds = (durationMs / 1000f).roundToInt().coerceAtLeast(1)
+        return when {
+            seconds < 60 -> "$seconds сек"
+            else -> {
+                val minutes = seconds / 60
+                val leftSeconds = seconds % 60
+                "$minutes мин ${leftSeconds} сек"
+            }
+        }
+    }
+
     private fun String.toAccessLevel(): AccessLevel {
         return runCatching { AccessLevel.valueOf(this) }.getOrDefault(AccessLevel.None)
     }
 
     private fun displayNameFromEmail(email: String): String {
         return email.substringBefore("@").replaceFirstChar { char ->
-            if (char.isLowerCase()) char.titlecase(Locale.getDefault()) else char.toString()
+            if (char.isLowerCase()) {
+                char.titlecase(Locale.getDefault())
+            } else {
+                char.toString()
+            }
         }
     }
 
     private fun formatNow(): String {
-        return SimpleDateFormat("dd.MM.yyyy · HH:mm", Locale("ru")).format(Date())
+        return SimpleDateFormat("dd.MM.yyyy HH:mm", Locale("ru")).format(Date())
     }
 }
