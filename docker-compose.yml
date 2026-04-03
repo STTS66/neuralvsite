@@ -85,6 +85,20 @@ services:
     networks:
       - neuralv-net
 
+  prompt-shop-bot:
+    build:
+      context: ./bot
+    container_name: neuralv-prompt-shop-bot
+    restart: unless-stopped
+    environment:
+      PROMPT_SHOP_BOT_TOKEN: ${PROMPT_SHOP_BOT_TOKEN}
+      PROMPT_PRICE_XTR: ${PROMPT_PRICE_XTR:-100}
+      PROMPTS_DIR: /app/prompts
+    volumes:
+      - ./bot/prompts:/app/prompts:ro
+    networks:
+      - neuralv-net
+
   frontend:
     build:
       context: ./react-site
