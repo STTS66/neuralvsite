@@ -51,6 +51,20 @@ async function adminFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   return response;
 }
 
+async function validateAdminSessionRequest() {
+  try {
+    const response = await adminFetch(`${API_URL}/admin/session`);
+    if (!response.ok) {
+      return { success: false };
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error(error);
+    return { success: false };
+  }
+}
+
 export interface SupportMessage {
   id: number;
   conversationId: number;
@@ -165,6 +179,8 @@ export interface AdminUserSearchResponse {
 }
 
 export const API = {
+  validateAdminSession: validateAdminSessionRequest,
+
   getUsers: async () => {
     try {
       const response = await adminFetch(`${API_URL}/users`);

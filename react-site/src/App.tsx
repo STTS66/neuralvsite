@@ -55,8 +55,40 @@ function createBanState(profile?: UserProfileResponse | null): ActiveBanState | 
 function ProtectedAdminRoute() {
   const role = localStorage.getItem('neuralv_role');
   const adminSessionToken = getStoredAdminSessionToken();
+  const [accessState, setAccessState] = useState<'checking' | 'allowed' | 'denied'>(() =>
+    role === 'admin' && adminSessionToken ? 'checking' : 'denied',
+  );
 
-  if (role !== 'admin' || !adminSessionToken) {
+  useEffect(() => {
+    let isMounted = true;
+
+    if (role !== 'admin' || !adminSessionToken) {
+      setAccessState('denied');
+      return;
+    }
+
+    const verifyAdminAccess = async () => {
+      const result = await API.validateAdminSession();
+      if (!isMounted) {
+        return;
+      }
+
+      setAccessState(result?.success ? 'allowed' : 'denied');
+    };
+
+    setAccessState('checking');
+    void verifyAdminAccess();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [role, adminSessionToken]);
+
+  if (accessState === 'checking') {
+    return null;
+  }
+
+  if (accessState !== 'allowed') {
     return <Navigate to={role ? '/dashboard' : '/login'} replace />;
   }
 

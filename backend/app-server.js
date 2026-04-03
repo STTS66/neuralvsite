@@ -2005,6 +2005,34 @@ app.get(
 );
 
 app.get(
+  '/api/admin/session',
+  requireAdminSession,
+  asyncRoute(async (req, res) => {
+    const user = await getAsync(
+      `
+        SELECT id, account_id, username, role
+        FROM users
+        WHERE id = ?
+      `,
+      [req.adminSession.userId],
+    );
+
+    res.json({
+      success: true,
+      user: user
+        ? {
+            id: user.id,
+            accountId: user.account_id,
+            username: user.username,
+            role: user.role,
+          }
+        : null,
+      expiresAt: req.adminSession.expiresAt,
+    });
+  }),
+);
+
+app.get(
   '/api/admin/users/search',
   requireAdminSession,
   asyncRoute(async (req, res) => {
